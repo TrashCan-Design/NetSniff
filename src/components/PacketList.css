@@ -1,0 +1,302 @@
+/* PacketList.css */
+
+.packet-list {
+  margin: 16px 0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  padding: 0 !important;
+}
+
+.packet-item {
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  transition: all 0.2s;
+  --padding-start: 16px;
+  --padding-end: 16px;
+  --padding-top: 12px;
+  --padding-bottom: 12px;
+  --inner-padding-end: 0;
+}
+
+.packet-item:hover {
+  background-color: rgba(0, 0, 0, 0.02);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.permission-button, .capture-button, .clear-button {
+  border-radius: 8px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  transition: all 0.2s ease;
+}
+
+.detail-card {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  margin: 16px !important;
+  transition: all 0.3s ease;
+}
+
+.detail-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+.packet-data {
+  border: 1px solid #e5e7eb;
+  background-color: #f9fafb;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 8px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  font-family: monospace;
+  font-size: 0.9em;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  max-height: 300px;
+}
+
+/* Dark mode styles */
+:root.dark .packet-data, .dark .packet-data {
+  background-color: #1e293b; /* slate-800 */
+  color: #f9fafb; /* gray-50 */
+  border-color: #334155; /* slate-700 */
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+:root.dark .packet-item, .dark .packet-item {
+  border-color: rgba(255, 255, 255, 0.1);
+  background-color: transparent;
+}
+
+:root.dark .packet-item:hover, .dark .packet-item:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+}
+
+:root.dark .detail-card, .dark .detail-card {
+  background-color: #1f2937; /* gray-800 */
+  color: #f9fafb; /* gray-50 */
+  border: 1px solid #374151; /* gray-700 */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+:root.dark .detail-card:hover, .dark .detail-card:hover {
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+:root.dark .packet-list, .dark .packet-list {
+  background-color: #1f2937; /* gray-800 */
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+:root.dark .back-button, .dark .back-button {
+  --color: #60a5fa; /* blue-400 */
+}
+
+:root.dark, .dark {
+  --ion-background-color: #111827; /* gray-900 */
+  --ion-text-color: #f9fafb; /* gray-50 */
+  --ion-toolbar-background: #1f2937; /* gray-800 */
+}
+
+:root.dark ion-content, .dark ion-content {
+  --background: #111827; /* gray-900 */
+}
+
+/* Enhanced buttons */
+.main-button {
+  --background: #2563eb; /* blue-600 */
+  --background-hover: #1d4ed8; /* blue-700 */
+  --color: white;
+  --box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
+}
+
+:root.dark .main-button, .dark .main-button {
+  --background: #3b82f6; /* blue-500 */
+  --color: white;
+  --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* Start capture button (green) */
+.start-button {
+  --background: var(--ion-color-success) !important;
+  --color: white !important;
+  height: 44px !important;
+  font-size: 13px !important;
+  padding: 0 16px !important;
+  margin: 8px 0 !important;
+  border-radius: 8px !important;
+}
+
+/* Stop capture button (red) */
+.stop-button {
+  --background: var(--ion-color-danger) !important;
+  --color: white !important;
+  height: 44px !important;
+  font-size: 13px !important;
+  padding: 0 16px !important;
+  margin: 8px 0 !important;
+  border-radius: 8px !important;
+}
+
+/* Standardize button sizes and spacing */
+.permission-button, .capture-button, .clear-button {
+  height: 44px !important;
+  font-size: 13px !important;
+  padding: 0 16px !important;
+  margin: 8px 0 !important;
+  border-radius: 8px !important;
+}
+
+.clear-button {
+  --background: var(--ion-color-secondary) !important;
+  --color: white !important;
+  height: 44px !important;
+  font-size: 13px !important;
+  padding: 0 16px !important;
+  margin: 8px 0 !important;
+  border-radius: 8px !important;
+}
+
+:root.dark .clear-button, .dark .clear-button {
+  --background: #8b5cf6; /* violet-500 */
+  --color: white;
+  --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* Mobile-specific styles and fixes */
+@media (max-width: 768px) {
+  /* Adjust card margins for mobile */
+  .detail-card {
+    margin: 8px 4px !important;
+    width: calc(100% - 8px) !important;
+    border-radius: 8px !important;
+  }
+
+  /* Full width list on mobile */
+  .packet-list {
+    margin: 8px 4px !important;
+    width: calc(100% - 8px) !important;
+  }
+
+  /* Make chips larger and more touch-friendly */
+  ion-chip {
+    height: 36px !important;
+    --background: linear-gradient(to right, var(--ion-color-primary), var(--ion-color-primary-shade)) !important;
+    font-size: 1rem !important;
+    margin: 4px !important;
+    padding: 0 12px !important;
+  }
+
+  /* Scale up buttons for touch */
+  .permission-button, .capture-button, .clear-button {
+    height: 50px !important;
+    font-size: 1.1rem !important;
+    margin: 6px 0 !important;
+  }
+
+  /* Improved spacing for network statistics */
+  ion-card-content ion-grid {
+    padding: 0 !important;
+  }
+
+  ion-card-content ion-row {
+    margin-bottom: 8px !important;
+  }
+
+  /* Start and stop button color overrides for mobile */
+  .start-button {
+    --background: var(--ion-color-success) !important;
+    --color: white !important;
+  }
+
+  .stop-button {
+    --background: var(--ion-color-danger) !important;
+    --color: white !important;
+  }
+
+  /* Notification system */
+  .notification-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+  }
+
+  /* Adjust list spacing for mobile */
+  .packet-list {
+    margin: 12px !important;
+  }
+
+  /* Fix chip sizing on small screens */
+  ion-chip {
+    font-size: 12px !important;
+    height: 28px !important;
+    padding: 0 8px !important;
+  }
+
+  /* Improve button spacing and size on mobile */
+  ion-button {
+    font-size: 14px !important;
+    height: auto !important;
+    --padding-top: 10px;
+    --padding-bottom: 10px;
+  }
+
+  /* Better text sizing for small screens */
+  ion-label h2 {
+    font-size: 16px !important;
+  }
+
+  ion-label p {
+    font-size: 13px !important;
+  }
+
+  /* Constrain payload display height on mobile */
+  .packet-data {
+    max-height: 180px !important;
+    font-size: 12px !important;
+  }
+
+  /* Better modal styling for mobile */
+  ion-modal ion-content {
+    --padding-top: 0 !important;
+    --padding-bottom: 0 !important;
+  }
+
+  /* Adjust badge sizing on mobile */
+  ion-badge {
+    font-size: 11px !important;
+    padding: 4px 8px !important;
+  }
+}
+
+/* Adjust IonGrid, IonRow, IonCol spacing */
+ion-grid {
+  padding: 8px !important;
+}
+
+ion-row {
+  margin-bottom: 8px;
+}
+
+/* Fix content container padding */
+.ion-padding {
+  --padding-start: 16px;
+  --padding-end: 16px;
+  --padding-top: 16px;
+  --padding-bottom: 16px;
+}
+
+/* Ensure proper text alignment in items */
+ion-label h2, ion-label h3, ion-label p {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  margin: 0 0 4px 0 !important;
+  padding: 0 !important;
+}

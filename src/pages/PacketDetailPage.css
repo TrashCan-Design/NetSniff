@@ -1,0 +1,163 @@
+.packet-data {
+  white-space: pre-wrap;
+  font-family: "Consolas", "Monaco", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-x: auto;
+  background-color: #f1f5f9; /* slate-100 */
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0; /* slate-200 */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+:root.dark .packet-data, .dark .packet-data {
+  background-color: #1e293b; /* slate-800 */
+  color: #f9fafb; /* gray-50 */
+  border-color: #334155; /* slate-700 */
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.segment-container {
+  margin-bottom: 20px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.segment-button {
+  --color: #64748b; /* slate-500 */
+  --color-checked: #2563eb; /* blue-600 */
+  --indicator-color: #3b82f6; /* blue-500 */
+  font-weight: 500;
+}
+
+:root.dark .segment-container, .dark .segment-container {
+  --background: #1f2937; /* gray-800 */
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+:root.dark .segment-button, .dark .segment-button {
+  --color: #94a3b8; /* slate-400 */
+  --color-checked: #f9fafb; /* gray-50 */
+  --indicator-color: #3b82f6; /* blue-500 */
+}
+
+.detail-card {
+  margin-top: 16px;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.detail-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+:root.dark .detail-card, .dark .detail-card {
+  background-color: #1f2937; /* gray-800 */
+  color: #f9fafb; /* gray-50 */
+  border: 1px solid #374151; /* gray-700 */
+}
+
+:root.dark .detail-card:hover, .dark .detail-card:hover {
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* Button styles */
+.back-button {
+  --color: #3b82f6; /* blue-500 */
+  --padding-start: 12px;
+  --padding-end: 12px;
+}
+
+:root.dark .back-button, .dark .back-button {
+  --color: #60a5fa; /* blue-400 */
+}
+
+.main-button {
+  --background: #2563eb; /* blue-600 */
+  --color: white;
+  font-weight: 500;
+  height: 48px;
+  --border-radius: 8px;
+  --box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
+}
+
+:root.dark .main-button, .dark .main-button {
+  --background: #3b82f6; /* blue-500 */
+  --color: white;
+  --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* Enhanced dark mode styles */
+:root.dark, .dark {
+  --ion-background-color: #111827; /* gray-900 */
+  --ion-text-color: #f9fafb; /* gray-50 */
+  --ion-toolbar-background: #1f2937; /* gray-800 */
+}
+
+/* Consistent spacing and layout fixes */
+ion-content {
+  --padding: 0 !important;
+}
+
+ion-grid {
+  padding: 12px !important;
+}
+
+ion-row {
+  margin-bottom: 12px;
+}
+
+ion-card {
+  margin: 16px !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+
+/* Item spacing in detail page */
+ion-item {
+  --padding-start: 16px;
+  --padding-end: 16px;
+  --padding-top: 12px;
+  --padding-bottom: 12px;
+  --inner-padding-end: 0;
+}
+
+/* Fix content container padding */
+.ion-padding {
+  --padding-start: 16px;
+  --padding-end: 16px;
+  --padding-top: 16px;
+  --padding-bottom: 16px;
+}
+
+/* Ensure proper text alignment in items */
+ion-label h2, ion-label h3, ion-label p, ion-text h2, ion-text h3, ion-text p {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+/* Enhance detail cards spacing */
+.detail-card {
+  padding: 16px !important;
+  margin-bottom: 16px;
+}
+
+:root.dark ion-content, .dark ion-content {
+  --background: #111827; /* gray-900 */
+}
+
+:root.dark ion-item, .dark ion-item {
+  --background: transparent;
+  --border-color: rgba(255, 255, 255, 0.1);
+}
+
+:root.dark ion-grid, .dark ion-grid {
+  background-color: transparent;
+  padding: 0;
+}
