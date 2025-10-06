@@ -2,6 +2,7 @@ import { registerPlugin } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
 
 export interface PacketData {
+  packetNumber: number;
   source: string;
   destination: string;
   protocol: string;
@@ -10,6 +11,7 @@ export interface PacketData {
   payload: string;
   appName?: string;
   packageName?: string;
+  uid?: number;
 }
 
 export interface ToyVpnPlugin {
