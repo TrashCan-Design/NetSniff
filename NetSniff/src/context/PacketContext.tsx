@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback, useRef } from 'react';
 import { ToyVpn, PacketData } from '../plugins/ToyVpn';
 
 export interface Packet extends PacketData {
@@ -9,12 +9,14 @@ export interface Packet extends PacketData {
 }
 
 export interface SearchFilters {
-  sourceIp?: string;
-  destinationIp?: string;
+  searchQuery?: string; // Unified search for all fields
   direction?: 'incoming' | 'outgoing' | 'all';
-  protocol?: string;
-  appName?: string;
-  payloadSearch?: string;
+}
+
+interface PacketBatchData {
+  packets: PacketData[];
+  count: number;
+  remaining: number;
 }
 
 interface PacketContextProps {
@@ -38,21 +40,38 @@ interface PacketContextProps {
     appDistribution: { [key: string]: number };
   };
   error: string | null;
+  loadMorePackets: () => void;
+  hasMorePackets: boolean;
 }
 
 const PacketContext = createContext<PacketContextProps | undefined>(undefined);
 
+const PACKETS_PER_PAGE = 100;
+const MAX_PACKETS_IN_MEMORY = 10000; // Increased from 5000
+
 export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [packets, setPackets] = useState<Packet[]>([]);
+  const [allPackets, setAllPackets] = useState<Packet[]>([]);
+  const [displayedPacketsCount, setDisplayedPacketsCount] = useState(PACKETS_PER_PAGE);
   const [isCapturing, setIsCapturing] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [hasVpnPermission, setHasVpnPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchFilters, setSearchFilters] = useState<SearchFilters>({
-    direction: 'all'
+    direction: 'all',
+    searchQuery: ''
   });
 
-  // Filtered packets based on search criteria
+  // Use ref to track if app is in background
+  const isBackgroundRef = useRef(false);
+  const pendingPacketsRef = useRef<Packet[]>([]);
+  const batchProcessingRef = useRef(false);
+
+  // Displayed packets (paginated)
+  const packets = useMemo(() => {
+    return allPackets.slice(0, displayedPacketsCount);
+  }, [allPackets, displayedPacketsCount]);
+
+  // Unified search filter - searches across all fields
   const filteredPackets = useMemo(() => {
     return packets.filter(packet => {
       // Direction filter
@@ -60,35 +79,20 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         if (packet.direction !== searchFilters.direction) return false;
       }
 
-      // Source IP filter
-      if (searchFilters.sourceIp) {
-        const searchIp = searchFilters.sourceIp.toLowerCase();
-        if (!packet.source.toLowerCase().includes(searchIp)) return false;
-      }
-
-      // Destination IP filter
-      if (searchFilters.destinationIp) {
-        const searchIp = searchFilters.destinationIp.toLowerCase();
-        if (!packet.destination.toLowerCase().includes(searchIp)) return false;
-      }
-
-      // Protocol filter
-      if (searchFilters.protocol) {
-        const searchProto = searchFilters.protocol.toLowerCase();
-        if (!packet.protocol.toLowerCase().includes(searchProto)) return false;
-      }
-
-      // App name filter
-      if (searchFilters.appName && packet.appName) {
-        const searchApp = searchFilters.appName.toLowerCase();
-        if (!packet.appName.toLowerCase().includes(searchApp) && 
-            !(packet.packageName || '').toLowerCase().includes(searchApp)) return false;
-      }
-
-      // Payload search
-      if (searchFilters.payloadSearch) {
-        const searchPayload = searchFilters.payloadSearch.toLowerCase();
-        if (!packet.payload.toLowerCase().includes(searchPayload)) return false;
+      // Unified search query - searches source, destination, protocol, app, payload
+      if (searchFilters.searchQuery) {
+        const query = searchFilters.searchQuery.toLowerCase();
+        const searchableText = [
+          packet.source,
+          packet.destination,
+          packet.protocol,
+          packet.appName || '',
+          packet.packageName || '',
+          packet.payload,
+          packet.packetNumber.toString()
+        ].join(' ').toLowerCase();
+        
+        if (!searchableText.includes(query)) return false;
       }
 
       return true;
@@ -98,22 +102,69 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // Stats calculation
   const stats = useMemo(() => {
     return {
-      totalPackets: packets.length,
-      incomingPackets: packets.filter(p => p.direction === 'incoming').length,
-      outgoingPackets: packets.filter(p => p.direction === 'outgoing').length,
-      totalBytes: packets.reduce((acc, p) => acc + p.size, 0),
-      protocolDistribution: packets.reduce((acc, p) => {
+      totalPackets: allPackets.length,
+      incomingPackets: allPackets.filter(p => p.direction === 'incoming').length,
+      outgoingPackets: allPackets.filter(p => p.direction === 'outgoing').length,
+      totalBytes: allPackets.reduce((acc, p) => acc + p.size, 0),
+      protocolDistribution: allPackets.reduce((acc, p) => {
         acc[p.protocol] = (acc[p.protocol] || 0) + 1;
         return acc;
       }, {} as { [key: string]: number }),
-      appDistribution: packets.reduce((acc, p) => {
+      appDistribution: allPackets.reduce((acc, p) => {
         if (p.appName) {
           acc[p.appName] = (acc[p.appName] || 0) + 1;
         }
         return acc;
       }, {} as { [key: string]: number })
     };
-  }, [packets]);
+  }, [allPackets]);
+
+  const hasMorePackets = displayedPacketsCount < allPackets.length;
+
+  const loadMorePackets = useCallback(() => {
+    setDisplayedPacketsCount(prev => 
+      Math.min(prev + PACKETS_PER_PAGE, allPackets.length)
+    );
+  }, [allPackets.length]);
+
+  // Batch process pending packets (when app comes to foreground)
+  const processPendingPackets = useCallback(() => {
+    if (batchProcessingRef.current || pendingPacketsRef.current.length === 0) return;
+    
+    batchProcessingRef.current = true;
+    console.log(`Processing ${pendingPacketsRef.current.length} pending packets`);
+    
+    setAllPackets(prevPackets => {
+      const newPackets = [...pendingPacketsRef.current, ...prevPackets];
+      pendingPacketsRef.current = [];
+      
+      // Limit total packets
+      if (newPackets.length > MAX_PACKETS_IN_MEMORY) {
+        return newPackets.slice(0, MAX_PACKETS_IN_MEMORY);
+      }
+      return newPackets;
+    });
+    
+    batchProcessingRef.current = false;
+  }, []);
+
+  // Add packet (optimized for background/foreground)
+  const addPackets = useCallback((newPackets: Packet[]) => {
+    if (isBackgroundRef.current) {
+      // Queue packets when in background
+      pendingPacketsRef.current.push(...newPackets);
+      console.log(`Queued ${newPackets.length} packets (total queued: ${pendingPacketsRef.current.length})`);
+    } else {
+      // Add immediately when in foreground
+      setAllPackets(prevPackets => {
+        const combined = [...newPackets, ...prevPackets];
+        if (combined.length > MAX_PACKETS_IN_MEMORY) {
+          return combined.slice(0, MAX_PACKETS_IN_MEMORY);
+        }
+        return combined;
+      });
+    }
+  }, []);
 
   useEffect(() => {
     const setupListener = async () => {
@@ -122,32 +173,41 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         
         await ToyVpn.removeAllListeners();
         
+        // Listen for VPN stopped event
         const vpnStoppedListener = await ToyVpn.addListener('vpnStopped', () => {
           console.log("PacketContext: VPN stopped event received");
           setIsCapturing(false);
           setIsConnecting(false);
         });
         
-        const packetListener = await ToyVpn.addListener('packetCaptured', (data: PacketData) => {
+        // FIXED: Listen for BATCH events instead of single packet events
+        const packetBatchListener = await ToyVpn.addListener('packetBatch', (data: PacketBatchData) => {
+          console.log(`Received packet batch: ${data.count} packets, ${data.remaining} remaining`);
+          
+          const newPackets: Packet[] = data.packets.map(packetData => ({
+            ...packetData,
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            timestamp: Date.now(),
+          }));
+          
+          addPackets(newPackets);
+        });
+        
+        // Also keep single packet listener for backwards compatibility (if needed)
+        const singlePacketListener = await ToyVpn.addListener('packetCaptured', (data: PacketData) => {
+          console.log("Received single packet");
           const packet: Packet = {
             ...data,
             id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             timestamp: Date.now(),
           };
-          
-          setPackets(prevPackets => {
-            const newPackets = [packet, ...prevPackets];
-            // Keep last 5000 packets to prevent memory issues
-            if (newPackets.length > 5000) {
-              return newPackets.slice(0, 5000);
-            }
-            return newPackets;
-          });
+          addPackets([packet]);
         });
         
         return () => {
           vpnStoppedListener.remove();
-          packetListener.remove();
+          packetBatchListener.remove();
+          singlePacketListener.remove();
         };
       } catch (error: unknown) {
         console.error('Failed to setup packet listener:', error);
@@ -163,7 +223,33 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         console.error('Failed to remove listeners:', error);
       });
     };
-  }, []);
+  }, [addPackets]);
+
+  // Handle visibility changes (background/foreground)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log("App going to background");
+        isBackgroundRef.current = true;
+      } else {
+        console.log("App coming to foreground");
+        isBackgroundRef.current = false;
+        
+        // Process any pending packets
+        if (pendingPacketsRef.current.length > 0) {
+          setTimeout(() => {
+            processPendingPackets();
+          }, 100);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [processPendingPackets]);
 
   const requestVpnPermission = async (): Promise<void> => {
     console.log("PacketContext: Requesting VPN permission");
@@ -261,26 +347,12 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     }
   };
 
-  const clearPackets = () => {
-    setPackets([]);
+  const clearPackets = useCallback(() => {
+    setAllPackets([]);
+    pendingPacketsRef.current = [];
+    setDisplayedPacketsCount(PACKETS_PER_PAGE);
     setError(null);
-  };
-
-  // Handle app state changes
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden && isCapturing) {
-        console.log("App going to background, VPN will continue running");
-        // VPN continues in background as a foreground service
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [isCapturing]);
+  }, []);
 
   return (
     <PacketContext.Provider value={{
@@ -296,7 +368,9 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       stopCapture,
       clearPackets,
       stats,
-      error
+      error,
+      loadMorePackets,
+      hasMorePackets
     }}>
       {children}
     </PacketContext.Provider>

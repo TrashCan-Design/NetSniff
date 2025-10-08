@@ -227,45 +227,17 @@ const PacketList: React.FC = () => {
                   <IonLabel>All</IonLabel>
                 </IonSegmentButton>
                 <IonSegmentButton value="incoming">
-                  <IonLabel>Incoming</IonLabel>
+                  <IonLabel>In</IonLabel>
                 </IonSegmentButton>
                 <IonSegmentButton value="outgoing">
-                  <IonLabel>Outgoing</IonLabel>
+                  <IonLabel>Out</IonLabel>
                 </IonSegmentButton>
               </IonSegment>
 
               <IonSearchbar
-                placeholder="Search Source IP"
-                value={searchFilters.sourceIp || ''}
-                onIonInput={e => handleFilterChange('sourceIp', e.detail.value)}
-                debounce={300}
-              />
-
-              <IonSearchbar
-                placeholder="Search Destination IP"
-                value={searchFilters.destinationIp || ''}
-                onIonInput={e => handleFilterChange('destinationIp', e.detail.value)}
-                debounce={300}
-              />
-
-              <IonSearchbar
-                placeholder="Search Protocol (TCP, UDP, etc.)"
-                value={searchFilters.protocol || ''}
-                onIonInput={e => handleFilterChange('protocol', e.detail.value)}
-                debounce={300}
-              />
-
-              <IonSearchbar
-                placeholder="Search App Name"
-                value={searchFilters.appName || ''}
-                onIonInput={e => handleFilterChange('appName', e.detail.value)}
-                debounce={300}
-              />
-
-              <IonSearchbar
-                placeholder="Search Payload (hex)"
-                value={searchFilters.payloadSearch || ''}
-                onIonInput={e => handleFilterChange('payloadSearch', e.detail.value)}
+                placeholder="Search Capture Packets"
+                value={searchFilters.searchQuery || ''}
+                onIonInput={e => handleFilterChange('searchQuery', e.detail.value)}
                 debounce={300}
               />
 

@@ -14,6 +14,12 @@ export interface PacketData {
   uid?: number;
 }
 
+export interface PacketBatchData {
+  packets: PacketData[];
+  count: number;
+  remaining: number;
+}
+
 export interface ToyVpnPlugin {
   requestVpnPermission(): Promise<{ status: string; message?: string }>;
   
@@ -25,11 +31,19 @@ export interface ToyVpnPlugin {
   
   stopVpn(): Promise<{ status: string; message?: string }>;
   
+  // Single packet event (for backwards compatibility)
   addListener(
     eventName: 'packetCaptured',
     listenerFunc: (packet: PacketData) => void
   ): Promise<PluginListenerHandle>;
   
+  // Batch packet event (PRIMARY - for performance)
+  addListener(
+    eventName: 'packetBatch',
+    listenerFunc: (batch: PacketBatchData) => void
+  ): Promise<PluginListenerHandle>;
+  
+  // VPN stopped event
   addListener(
     eventName: 'vpnStopped',
     listenerFunc: () => void

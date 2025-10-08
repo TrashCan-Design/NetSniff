@@ -121,12 +121,28 @@ public class ToyVpnPlugin extends Plugin {
         }
     }
 
+    /**
+     * Send single packet notification (for immediate important packets)
+     */
     public static void notifyPacketCaptured(JSObject packetData) {
         if (instance != null) {
             try {
                 instance.notifyListeners("packetCaptured", packetData);
             } catch (Exception e) {
                 Log.e(TAG, "Error notifying packet listeners", e);
+            }
+        }
+    }
+    
+    /**
+     * Send batch of packets (optimized for performance)
+     */
+    public static void notifyPacketBatch(JSObject batchData) {
+        if (instance != null) {
+            try {
+                instance.notifyListeners("packetBatch", batchData);
+            } catch (Exception e) {
+                Log.e(TAG, "Error notifying batch listeners", e);
             }
         }
     }

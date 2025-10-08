@@ -28,7 +28,7 @@ export class ToyVpnWeb extends WebPlugin implements ToyVpnPlugin {
   }
   
   async addListener(
-    eventName: 'packetCaptured' | 'vpnStopped',
+    eventName: 'packetCaptured' | 'vpnStopped' | 'packetBatch',
     listenerFunc: any
   ): Promise<PluginListenerHandle> {
     console.log('Web: addListener called for', eventName);
