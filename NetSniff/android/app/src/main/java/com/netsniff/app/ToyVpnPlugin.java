@@ -10,6 +10,12 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.util.List;
+import org.json.JSONObject;
+import org.json.JSONArray;
+import com.getcapacitor.JSArray;
+import com.getcapacitor.JSObject;
+
 
 @CapacitorPlugin(name = "ToyVpn")
 public class ToyVpnPlugin extends Plugin {
@@ -158,4 +164,189 @@ public class ToyVpnPlugin extends Plugin {
             }
         }
     }
+    //ADDED BY KRINA
+    // ==================== DATABASE METHODS ====================
+
+@PluginMethod
+public void getTraffic(PluginCall call) {
+    try {
+        int limit = call.getInt("limit", 100);
+        java.util.List<Allowed.TrafficRecord> list = Allowed.getAllTraffic(limit);
+
+        com.getcapacitor.JSArray arr = new com.getcapacitor.JSArray();
+        for (Allowed.TrafficRecord r : list) {
+            JSObject o = new JSObject();
+            o.put("id", r.id);
+            o.put("timestamp", r.timestamp);
+            o.put("source_ip", r.sourceIp);
+            o.put("source_port", r.sourcePort);
+            o.put("dest_ip", r.destIp);
+            o.put("dest_port", r.destPort);
+            o.put("protocol", r.protocol);
+            o.put("direction", r.direction);
+            o.put("size", r.size);
+            o.put("app_name", r.appName);
+            o.put("package_name", r.packageName);
+            o.put("uid", r.uid);
+            o.put("payload", r.payload);
+            o.put("domain", r.domain);
+            arr.put(o);
+        }
+
+        JSObject res = new JSObject();
+        res.put("traffic", arr);
+        call.resolve(res);
+    } catch (Exception e) {
+        Log.e(TAG, "Error in getTraffic", e);
+        call.reject("Failed to get traffic: " + e.getMessage());
+    }
+}
+
+@PluginMethod
+public void getBlacklist(PluginCall call) {
+    try {
+        java.util.List<Allowed.BlacklistEntry> list = Allowed.getAllBlacklist();
+        com.getcapacitor.JSArray arr = new com.getcapacitor.JSArray();
+        for (Allowed.BlacklistEntry b : list) {
+            JSObject o = new JSObject();
+            o.put("id", b.id);
+            o.put("domain", b.domain);
+            o.put("added_time", b.addedTime);
+            o.put("enabled", b.enabled);
+            o.put("description", b.description);
+            arr.put(o);
+        }
+        JSObject res = new JSObject();
+        res.put("blacklist", arr);
+        call.resolve(res);
+    } catch (Exception e) {
+        Log.e(TAG, "Error in getBlacklist", e);
+        call.reject("Failed to get blacklist: " + e.getMessage());
+    }
+}
+
+@PluginMethod
+public void addToBlacklist(PluginCall call) {
+    String domain = call.getString("domain", "").trim();
+    String description = call.getString("description", "");
+    if (domain.isEmpty()) {
+        call.reject("domain required");
+        return;
+    }
+    boolean ok = Allowed.addToBlacklist(domain, description);
+    JSObject res = new JSObject();
+    res.put("ok", ok);
+    call.resolve(res);
+}
+
+@PluginMethod
+public void removeFromBlacklist(PluginCall call) {
+    String domain = call.getString("domain", "").trim();
+    if (domain.isEmpty()) {
+        call.reject("domain required");
+        return;
+    }
+    boolean ok = Allowed.removeFromBlacklist(domain);
+    JSObject res = new JSObject();
+    res.put("ok", ok);
+    call.resolve(res);
+}
+
+@PluginMethod
+public void setBlacklistEnabled(PluginCall call) {
+    String domain = call.getString("domain", "").trim();
+    boolean enabled = call.getBoolean("enabled", true);
+    if (domain.isEmpty()) {
+        call.reject("domain required");
+        return;
+    }
+    boolean ok = Allowed.setBlacklistEnabled(domain, enabled);
+    JSObject res = new JSObject();
+    res.put("ok", ok);
+    call.resolve(res);
+}
+/*Added By Krina */
+/*@PluginMethod()
+public void getSavedTraffic(PluginCall call) {
+    try {
+        // Use your existing Allowed helper class (like getTraffic)
+        java.util.List<Allowed.TrafficRecord> list = Allowed.getOldTraffic(); // implement this method in Allowed.java
+
+        JSArray arr = new JSArray();
+        for (Allowed.TrafficRecord r : list) {
+            JSObject o = new JSObject();
+            o.put("id", r.id);
+            o.put("timestamp", r.timestamp);
+            o.put("source_ip", r.sourceIp);
+            o.put("source_port", r.sourcePort);
+            o.put("dest_ip", r.destIp);
+            o.put("dest_port", r.destPort);
+            o.put("protocol", r.protocol);
+            o.put("direction", r.direction);
+            o.put("size", r.size);
+            o.put("app_name", r.appName);
+            o.put("package_name", r.packageName);
+            o.put("uid", r.uid);
+            o.put("payload", r.payload);
+            o.put("domain", r.domain);
+            arr.put(o);
+        }
+
+        JSObject ret = new JSObject();
+        ret.put("traffic", arr);
+        call.resolve(ret);
+
+    } catch (Exception e) {
+        Log.e(TAG, "Error in getSavedTraffic", e);
+        call.reject("Failed to fetch saved traffic: " + e.getMessage());
+    }
+}*/
+@PluginMethod()
+public void getSavedTraffic(PluginCall call) {
+    try {
+        // ✅ Ensure DB initialized before using
+        try {
+            Allowed.getInstance(); // will throw if not initialized
+        } catch (IllegalStateException e) {
+            Log.w(TAG, "Allowed not initialized — initializing now from plugin context");
+            Allowed.initialize(getContext());
+        }
+
+        // ✅ Fetch saved/old traffic records
+        java.util.List<Allowed.TrafficRecord> list = Allowed.getOldTraffic();
+
+        JSArray arr = new JSArray();
+        for (Allowed.TrafficRecord r : list) {
+            JSObject o = new JSObject();
+            o.put("id", r.id);
+            o.put("timestamp", r.timestamp);
+            o.put("source_ip", r.sourceIp);
+            o.put("source_port", r.sourcePort);
+            o.put("dest_ip", r.destIp);
+            o.put("dest_port", r.destPort);
+            o.put("protocol", r.protocol);
+            o.put("direction", r.direction);
+            o.put("size", r.size);
+            o.put("app_name", r.appName);
+            o.put("package_name", r.packageName);
+            o.put("uid", r.uid);
+            o.put("payload", r.payload);
+            o.put("domain", r.domain);
+            arr.put(o);
+        }
+
+        JSObject ret = new JSObject();
+        ret.put("traffic", arr);
+        call.resolve(ret);
+
+        Log.d(TAG, "✅ Returned " + list.size() + " saved packets from DB");
+
+    } catch (Exception e) {
+        Log.e(TAG, "❌ Error in getSavedTraffic", e);
+        call.reject("Failed to fetch saved traffic: " + e.getMessage());
+    }
+}
+
+
+
 }

@@ -42,4 +42,33 @@ export class ToyVpnWeb extends WebPlugin implements ToyVpnPlugin {
   async removeAllListeners(): Promise<void> {
     console.log('Web: removeAllListeners called');
   }
+
+  // ADDED BY KRINA
+    // ==================== DATABASE METHODS (web fallbacks) ====================
+
+  async getTraffic(_options: { limit?: number }): Promise<{ traffic: any[] }> {
+    console.warn('ToyVpnWeb: getTraffic() not implemented for web.');
+    return { traffic: [] };
+  }
+
+  async getBlacklist(): Promise<{ blacklist: any[] }> {
+    console.warn('ToyVpnWeb: getBlacklist() not implemented for web.');
+    return { blacklist: [] };
+  }
+
+  async addToBlacklist(_options: { domain: string; description?: string }): Promise<{ ok: boolean }> {
+    console.warn('ToyVpnWeb: addToBlacklist() not implemented for web.');
+    return { ok: false };
+  }
+
+  async removeFromBlacklist(_options: { domain: string }): Promise<{ ok: boolean }> {
+    console.warn('ToyVpnWeb: removeFromBlacklist() not implemented for web.');
+    return { ok: false };
+  }
+
+  async setBlacklistEnabled(_options: { domain: string; enabled: boolean }): Promise<{ ok: boolean }> {
+    console.warn('ToyVpnWeb: setBlacklistEnabled() not implemented for web.');
+    return { ok: false };
+  }
+
 }

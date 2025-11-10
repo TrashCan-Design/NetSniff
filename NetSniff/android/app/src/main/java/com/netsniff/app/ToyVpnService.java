@@ -43,13 +43,13 @@ public class ToyVpnService extends VpnService {
     public static final String ACTION_CONNECT = "com.netsniff.app.START";
     public static final String ACTION_DISCONNECT = "com.netsniff.app.STOP";
     
-    private static final Set<String> ALLOWED_PACKAGES = new HashSet<>(Arrays.asList(
+   /* private static final Set<String> ALLOWED_PACKAGES = new HashSet<>(Arrays.asList(
         "com.android.chrome",
         "com.microsoft.emmx",
         "com.google.android.googlequicksearchbox",
         "com.google.android.youtube",
         "com.google.android.gm"
-    ));
+    ));*/
     
     // TCP States
     public static final int TCP_IDLE = 0;
@@ -171,10 +171,11 @@ public class ToyVpnService extends VpnService {
     @Override
     public void onCreate() {
         super.onCreate();
+        Allowed.initialize(getApplicationContext());
         createNotificationChannel();
         packageManager = getPackageManager();
         usageStatsManager = (UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
-        
+
         tcpConnections = new ConcurrentHashMap<>();
         udpConnections = new ConcurrentHashMap<>();
         allowedUids = new HashSet<>();
@@ -187,7 +188,7 @@ public class ToyVpnService extends VpnService {
         
         buildUidCache();
         
-        for (String pkg : ALLOWED_PACKAGES) {
+        /*for (String pkg : ALLOWED_PACKAGES) {
             try {
                 ApplicationInfo appInfo = packageManager.getApplicationInfo(pkg, 0);
                 allowedUids.add(appInfo.uid);
@@ -195,7 +196,7 @@ public class ToyVpnService extends VpnService {
             } catch (PackageManager.NameNotFoundException e) {
                 Log.w(TAG, "Package not found: " + pkg);
             }
-        }
+        }*/
     }
     
     private void buildUidCache() {
@@ -361,14 +362,14 @@ public class ToyVpnService extends VpnService {
             builder.addDnsServer("8.8.8.8");
             builder.addDnsServer("8.8.4.4");
 
-            for (String pkg : ALLOWED_PACKAGES) {
+            /*for (String pkg : ALLOWED_PACKAGES) {
                 try {
                     builder.addAllowedApplication(pkg);
                     Log.d(TAG, "Added to VPN: " + pkg);
                 } catch (PackageManager.NameNotFoundException e) {
                     Log.w(TAG, "Cannot add app to VPN: " + pkg);
                 }
-            }
+            }*/
 
             vpnInterface = builder.establish();
             if (vpnInterface == null) {
@@ -483,7 +484,13 @@ public class ToyVpnService extends VpnService {
             
             String key = sourceIp + ":" + sourcePort + "-" + destIp + ":" + destPort;
             TcpConnection conn = tcpConnections.get(key);
-            
+                    // 🔒 BLOCK access to blacklisted sites/domains/IPs
+        if (Allowed.isDomainBlacklisted(destIp)) {
+            Log.w(TAG, "❌ Blocking TCP connection to blacklisted site/IP: " + destIp);
+            sendTcpReset(sourceIp, sourcePort, destIp, destPort, 0, 0); // immediately close TCP connection
+            return; // stop further processing
+        }
+
             if (rst) {
                 if (conn != null) {
                     closeTcpConnection(conn);
@@ -641,7 +648,7 @@ public class ToyVpnService extends VpnService {
             Log.e(TAG, "Error handling TCP packet", e);
         }
     }
-    
+
     private void queueTcpSegment(TcpConnection conn, ByteBuffer buffer, int dataStart, int dataSize, long seq, boolean psh) {
         if (seq < conn.remoteSeq) {
             Log.w(TAG, "Ignoring old segment: " + seq + " < " + conn.remoteSeq);
@@ -948,56 +955,61 @@ public class ToyVpnService extends VpnService {
         packet.flip();
         return packet;
     }
-    
+
     private void handleUdpPacket(ByteBuffer buffer, int ihl, String sourceIp, String destIp, int totalLength) {
         try {
             buffer.position(ihl);
             int sourcePort = buffer.getShort() & 0xFFFF;
             int destPort = buffer.getShort() & 0xFFFF;
             int length = buffer.getShort() & 0xFFFF;
-            
+
             String key = sourceIp + ":" + sourcePort + "-" + destIp + ":" + destPort;
-            
+            // 🔒 BLOCK if destination IP is blacklisted
+if (Allowed.isDomainBlacklisted(destIp)) {
+    Log.w(TAG, "❌ Blocking UDP packet to blacklisted site/IP: " + destIp);
+    return; // drop silently
+}
+
             UdpConnection conn = udpConnections.get(key);
             if (conn == null) {
                 int uid = getMostLikelyActiveUid();
                 conn = new UdpConnection(key, sourceIp, sourcePort, destIp, destPort, uid);
-                
+
                 try {
                     conn.channel = DatagramChannel.open();
                     conn.channel.configureBlocking(false);
                     protect(conn.channel.socket());
                     conn.channel.register(selector, SelectionKey.OP_READ, conn);
-                    
+
                     udpConnections.put(key, conn);
                     Log.d(TAG, "New UDP connection: " + key);
-                    
+
                 } catch (IOException e) {
                     Log.e(TAG, "Failed to create UDP socket", e);
                     return;
                 }
             }
-            
+
             conn.lastActivity = System.currentTimeMillis();
-            
+
             int dataSize = length - 8;
             if (dataSize > 0) {
                 buffer.position(ihl + 8);
                 byte[] data = new byte[dataSize];
                 buffer.get(data);
-                
+
                 InetSocketAddress dest = new InetSocketAddress(destIp, destPort);
                 conn.channel.send(ByteBuffer.wrap(data), dest);
-                
-                notifyPacketOptimized(buffer.array(), totalLength, "outgoing", conn.uid, 
+
+                notifyPacketOptimized(buffer.array(), totalLength, "outgoing", conn.uid,
                     sourceIp, sourcePort, destIp, destPort, 17);
             }
-            
+
         } catch (Exception e) {
             Log.e(TAG, "Error handling UDP packet", e);
         }
     }
-    
+
     private void handleUdpRead(UdpConnection conn) {
         try {
             ByteBuffer buffer = ByteBuffer.allocate(MAX_PACKET_SIZE);
@@ -1174,18 +1186,29 @@ public class ToyVpnService extends VpnService {
             String appName = getAppNameForUid(uid);
             String packageName = getPackageNameForUid(uid);
             long pktNum = packetCounter.incrementAndGet();
-            
+            // ADDED BY KRINA
+            String protocolName = protocol == 6 ? "TCP" : "UDP"; //
+        long timestamp = System.currentTimeMillis(); //
+        Allowed.storeTraffic(
+            sourceIp, sourcePort, destIp, destPort,
+            protocolName, direction, length, appName,
+            packageName, uid, null, "" // Domain set to empty string (required by Allowed.storeTraffic)
+        );
+        // EDITING ENDS
             JSObject packetInfo = new JSObject();
             packetInfo.put("packetNumber", pktNum);
             packetInfo.put("source", sourceIp + ":" + sourcePort);
             packetInfo.put("destination", destIp + ":" + destPort);
-            packetInfo.put("protocol", protocol == 6 ? "TCP" : "UDP");
+            //next line is also edited by krina
+
+            packetInfo.put("protocol", protocolName);
             packetInfo.put("direction", direction);
             packetInfo.put("size", length);
             packetInfo.put("appName", appName);
             packetInfo.put("packageName", packageName);
             packetInfo.put("uid", uid);
-            packetInfo.put("timestamp", System.currentTimeMillis());
+            //next line is edited by krina
+            packetInfo.put("timestamp", timestamp);
             
             StringBuilder payload = new StringBuilder();
             int payloadLength = Math.min(length, 32);

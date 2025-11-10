@@ -1,5 +1,6 @@
 import { registerPlugin } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
+// ADDED BY KRINA
 
 export interface PacketData {
   packetNumber: number;
@@ -50,6 +51,14 @@ export interface ToyVpnPlugin {
   ): Promise<PluginListenerHandle>;
   
   removeAllListeners(): Promise<void>;
+  // ADDED BY KRINA
+    // ================= DATABASE METHODS =================
+  getTraffic(options: { limit?: number }): Promise<{ traffic: any[] }>;
+  getBlacklist(): Promise<{ blacklist: any[] }>;
+  addToBlacklist(options: { domain: string; description?: string }): Promise<{ ok: boolean }>;
+  removeFromBlacklist(options: { domain: string }): Promise<{ ok: boolean }>;
+  setBlacklistEnabled(options: { domain: string; enabled: boolean }): Promise<{ ok: boolean }>;
+
 }
 
 const ToyVpn = registerPlugin<ToyVpnPlugin>('ToyVpn', {

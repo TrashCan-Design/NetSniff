@@ -1,3 +1,4 @@
+// CHANGES MADE BY KRINA: ADDDED DbPAGE ROUTING AND TAB
 import { IonApp, 
   IonRouterOutlet, 
   IonHeader, 
@@ -44,6 +45,8 @@ import PacketList from './components/PacketList';
 import PacketDetailPage from './pages/PacketDetailPage';
 import AboutPage from './pages/About';
 import Infopage from './pages/Infopage';
+import DbPage from './pages/DbPage';
+
 
 setupIonicReact();
 
@@ -91,6 +94,7 @@ const App: React.FC = () => {
               <Route exact path="/about" component={AboutPage} />
               <Route exact path="/info" component={Infopage} />
               <Route exact path="/packet/:id" component={PacketDetailPage} />
+              <Route exact path="/db" component={DbPage} />
               <Route exact path="/">
                 <Redirect to="/home" />
               </Route>
@@ -106,6 +110,12 @@ const App: React.FC = () => {
                 <IonIcon icon={list} />
                 <IonLabel>Packets</IonLabel>
               </IonTabButton>
+              
+              <IonTabButton tab="db" href="/db">
+                <IonIcon icon={informationCircle} />
+                <IonLabel>DB</IonLabel>
+              </IonTabButton>
+
 
               <IonTabButton tab="darkmode" onClick={toggleDarkMode}>
                 <IonIcon icon={moon} />

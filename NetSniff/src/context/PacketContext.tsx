@@ -42,6 +42,7 @@ interface PacketContextProps {
   error: string | null;
   loadMorePackets: () => void;
   hasMorePackets: boolean;
+  loadOldPackets: () => Promise<void>;
 }
 
 const PacketContext = createContext<PacketContextProps | undefined>(undefined);
@@ -165,6 +166,48 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       });
     }
   }, []);
+  /*Added By Krina*/
+  /*Added By Krina*/
+  const loadOldPackets = async () => {
+    try {
+      const old = await ToyVpn.getSavedTraffic();  // Native plugin call
+      console.log("getSavedTraffic() result:", old);
+
+      if (old && Array.isArray(old.traffic)) {
+        // ✅ Map DB data (snake_case) to Packet shape expected by UI
+        const mapped = old.traffic.map((r: any, i: number) => ({
+          id: `db-${r.id ?? `${Date.now()}-${i}`}`,
+          timestamp: typeof r.timestamp === "number"
+            ? r.timestamp
+            : Date.parse(r.timestamp) || Date.now(),
+          source: r.source_ip && r.source_port
+            ? `${r.source_ip}:${r.source_port}`
+            : (r.source_ip ?? "unknown"),
+          destination: r.dest_ip && r.dest_port
+            ? `${r.dest_ip}:${r.dest_port}`
+            : (r.dest_ip ?? "unknown"),
+          protocol: (r.protocol ?? "").toString().toUpperCase(),
+          direction: r.direction === "incoming" ? "incoming" : "outgoing",
+          size: Number(r.size) || 0,
+          payload: r.payload ?? "",
+          appName: r.app_name || undefined,
+          packageName: r.package_name || undefined,
+          packetNumber: Number(r.id) || i + 1,
+        }));
+
+        // ❗Show only the old packets — overwrite existing data
+        setAllPackets(mapped);
+        console.log(`✅ Loaded ${mapped.length} old packets from DB.`);
+      } else {
+        console.warn("⚠️ No old packets found in database.");
+        setAllPackets([]); // clear if none
+      }
+    } catch (error) {
+      console.error("❌ Error loading old packets:", error);
+      setAllPackets([]); // clear on error
+    }
+  };
+
 
   useEffect(() => {
     const setupListener = async () => {
@@ -250,6 +293,11 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [processPendingPackets]);
+  // 🌐 Automatically load saved packets from database on app start
+  /*useEffect(() => {
+    console.log("🌐 PacketContext initialized → loading old packets...");
+    loadOldPackets();
+  }, []);*/
 
   const requestVpnPermission = async (): Promise<void> => {
     console.log("PacketContext: Requesting VPN permission");
@@ -347,6 +395,8 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     }
   };
 
+
+
   const clearPackets = useCallback(() => {
     setAllPackets([]);
     pendingPacketsRef.current = [];
@@ -370,7 +420,8 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       stats,
       error,
       loadMorePackets,
-      hasMorePackets
+      hasMorePackets,
+      loadOldPackets,
     }}>
       {children}
     </PacketContext.Provider>
