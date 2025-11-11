@@ -14,27 +14,15 @@ import java.util.Set;
 import java.net.InetAddress;
 import java.util.concurrent.ConcurrentHashMap;
 
-
-/**
- * Database helper for storing network traffic and managing blacklisted sites
- * Usage:
- * 1. Initialize: Allowed.initialize(context)
- * 2. Store traffic: Allowed.storeTraffic(...)
- * 3. Blacklist site: Allowed.addToBlacklist(domain)
- * 4. Check if blocked: Allowed.isBlacklisted(domain)
- */
 public class Allowed extends SQLiteOpenHelper {
     private static final String TAG = "AllowedDB";
 
-    // Database Info
     private static final String DATABASE_NAME = "netsniff.db";
     private static final int DATABASE_VERSION = 1;
 
-    // Table Names
     private static final String TABLE_TRAFFIC = "traffic";
     private static final String TABLE_BLACKLIST = "blacklist";
 
-    // Traffic Table Columns
     private static final String KEY_ID = "id";
     private static final String KEY_TIMESTAMP = "timestamp";
     private static final String KEY_SOURCE_IP = "source_ip";
@@ -50,22 +38,20 @@ public class Allowed extends SQLiteOpenHelper {
     private static final String KEY_PAYLOAD = "payload";
     private static final String KEY_DOMAIN = "domain";
 
-    // Blacklist Table Columns
     private static final String KEY_BL_ID = "id";
     private static final String KEY_BL_DOMAIN = "domain";
     private static final String KEY_BL_ADDED_TIME = "added_time";
     private static final String KEY_BL_ENABLED = "enabled";
     private static final String KEY_BL_DESCRIPTION = "description";
 
-    // Singleton instance
     private static Allowed instance;
 
-    // In-memory cache for blacklist (for performance)
     private static Set<String> blacklistCache = new HashSet<>();
     private static long lastCacheUpdate = 0;
-    private static final long CACHE_REFRESH_INTERVAL = 30000; // 30 seconds
+    private static final long CACHE_REFRESH_INTERVAL = 30000;
+    
+    private static final Set<String> blockedIPs = ConcurrentHashMap.newKeySet();
 
-    // Legacy fields
     public String raddr = null;
     public int rport = 0;
 
@@ -73,9 +59,6 @@ public class Allowed extends SQLiteOpenHelper {
         super(context, DATABASE_NAME, null, DATABASE_VERSION);
     }
 
-    /**
-     * Initialize the database (call this once in Application or Service onCreate)
-     */
     public static synchronized void initialize(Context context) {
         if (instance == null) {
             instance = new Allowed(context.getApplicationContext());
@@ -84,9 +67,6 @@ public class Allowed extends SQLiteOpenHelper {
         }
     }
 
-    /**
-     * Get singleton instance
-     */
     public static synchronized Allowed getInstance() {
         if (instance == null) {
             throw new IllegalStateException("Allowed not initialized. Call initialize(context) first.");
@@ -96,7 +76,6 @@ public class Allowed extends SQLiteOpenHelper {
 
     @Override
     public void onCreate(SQLiteDatabase db) {
-        // Create Traffic Table
         String CREATE_TRAFFIC_TABLE = "CREATE TABLE " + TABLE_TRAFFIC + "("
                 + KEY_ID + " INTEGER PRIMARY KEY AUTOINCREMENT,"
                 + KEY_TIMESTAMP + " INTEGER,"
@@ -114,7 +93,6 @@ public class Allowed extends SQLiteOpenHelper {
                 + KEY_DOMAIN + " TEXT"
                 + ")";
 
-        // Create Blacklist Table
         String CREATE_BLACKLIST_TABLE = "CREATE TABLE " + TABLE_BLACKLIST + "("
                 + KEY_BL_ID + " INTEGER PRIMARY KEY AUTOINCREMENT,"
                 + KEY_BL_DOMAIN + " TEXT UNIQUE,"
@@ -126,7 +104,6 @@ public class Allowed extends SQLiteOpenHelper {
         db.execSQL(CREATE_TRAFFIC_TABLE);
         db.execSQL(CREATE_BLACKLIST_TABLE);
 
-        // Indexes for faster lookups
         db.execSQL("CREATE INDEX idx_traffic_timestamp ON " + TABLE_TRAFFIC + "(" + KEY_TIMESTAMP + ")");
         db.execSQL("CREATE INDEX idx_traffic_domain ON " + TABLE_TRAFFIC + "(" + KEY_DOMAIN + ")");
         db.execSQL("CREATE INDEX idx_blacklist_domain ON " + TABLE_BLACKLIST + "(" + KEY_BL_DOMAIN + ")");
@@ -141,11 +118,6 @@ public class Allowed extends SQLiteOpenHelper {
         onCreate(db);
     }
 
-    // ==================== TRAFFIC STORAGE METHODS ====================
-
-    /**
-     * Store network traffic data
-     */
     public static long storeTraffic(String sourceIp, int sourcePort, String destIp, int destPort,
                                     String protocol, String direction, int size, String appName,
                                     String packageName, int uid, String payload, String domain) {
@@ -176,9 +148,6 @@ public class Allowed extends SQLiteOpenHelper {
         }
     }
 
-    /**
-     * Get all recent traffic
-     */
     public static List<TrafficRecord> getAllTraffic(int limit) {
         List<TrafficRecord> records = new ArrayList<>();
         try {
@@ -199,23 +168,11 @@ public class Allowed extends SQLiteOpenHelper {
         return records;
     }
 
-    // ✅ FINAL FIXED METHOD
-    /**
-     * Get saved (old) traffic records from database (most recent first)
-     */
     public static List<TrafficRecord> getOldTraffic() {
         List<TrafficRecord> records = new ArrayList<>();
 
         try {
             SQLiteDatabase db = getInstance().getReadableDatabase();
-            Log.d(TAG, "🧩 Querying traffic count check...");
-            Cursor testCursor = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_TRAFFIC, null);
-            if (testCursor.moveToFirst()) {
-                int count = testCursor.getInt(0);
-                Log.d(TAG, "📊 Total traffic rows in DB: " + count);
-            }
-            testCursor.close();
-            // ✅ Fetch 500 most recent saved packets
             String query = "SELECT * FROM " + TABLE_TRAFFIC +
                     " ORDER BY " + KEY_TIMESTAMP + " DESC LIMIT 500";
 
@@ -228,17 +185,14 @@ public class Allowed extends SQLiteOpenHelper {
             }
 
             cursor.close();
-            Log.d(TAG, "✅ getOldTraffic() loaded " + records.size() + " packets from DB");
+            Log.d(TAG, "getOldTraffic() loaded " + records.size() + " packets from DB");
         } catch (Exception e) {
-            Log.e(TAG, "❌ Error reading old traffic", e);
+            Log.e(TAG, "Error reading old traffic", e);
         }
 
         return records;
     }
 
-    /**
-     * Clear old traffic records (keep last N days)
-     */
     public static int clearOldTraffic(int daysToKeep) {
         try {
             SQLiteDatabase db = getInstance().getWritableDatabase();
@@ -256,8 +210,6 @@ public class Allowed extends SQLiteOpenHelper {
         }
     }
 
-    // ==================== BLACKLIST METHODS ====================
-
     public static boolean addToBlacklist(String domain, String description) {
         try {
             SQLiteDatabase db = getInstance().getWritableDatabase();
@@ -273,6 +225,19 @@ public class Allowed extends SQLiteOpenHelper {
 
             if (id != -1) {
                 blacklistCache.add(domain.toLowerCase());
+                blockedIPs.add(domain.toLowerCase());
+                
+                if (!domain.startsWith(".")) {
+                    blockedIPs.add("." + domain.toLowerCase());
+                }
+                
+                try {
+                    InetAddress[] addrs = InetAddress.getAllByName(domain);
+                    for (InetAddress addr : addrs) {
+                        blockedIPs.add(addr.getHostAddress());
+                    }
+                } catch (Exception ignore) {}
+                
                 Log.d(TAG, "Added to blacklist: " + domain);
                 return true;
             }
@@ -283,8 +248,6 @@ public class Allowed extends SQLiteOpenHelper {
         }
     }
 
-
-
     public static boolean removeFromBlacklist(String domain) {
         try {
             SQLiteDatabase db = getInstance().getWritableDatabase();
@@ -293,6 +256,8 @@ public class Allowed extends SQLiteOpenHelper {
                     new String[]{domain.toLowerCase()});
             if (deleted > 0) {
                 blacklistCache.remove(domain.toLowerCase());
+                blockedIPs.remove(domain.toLowerCase());
+                blockedIPs.remove("." + domain.toLowerCase());
                 Log.d(TAG, "Removed from blacklist: " + domain);
                 return true;
             }
@@ -388,7 +353,57 @@ public class Allowed extends SQLiteOpenHelper {
         }
     }
 
-    // ==================== DATA CLASSES ====================
+    public static Set<String> getBlockedEntries() {
+        return new HashSet<>(blockedIPs);
+    }
+
+    public static void loadBlacklist(Context context) {
+        try {
+            SQLiteDatabase db = getInstance().getReadableDatabase();
+            Cursor c = db.rawQuery("SELECT domain FROM blacklist WHERE enabled=1", null);
+            blockedIPs.clear();
+
+            while (c.moveToNext()) {
+                String entry = c.getString(0).trim().toLowerCase();
+
+                blockedIPs.add(entry);
+
+                if (!entry.startsWith(".")) {
+                    blockedIPs.add("." + entry);
+                }
+
+                try {
+                    InetAddress[] addrs = InetAddress.getAllByName(entry);
+                    for (InetAddress addr : addrs) {
+                        blockedIPs.add(addr.getHostAddress());
+                    }
+                } catch (Exception ignore) {}
+            }
+            c.close();
+
+            Log.d(TAG, "Loaded blacklist entries: " + blockedIPs.size());
+        } catch (Exception e) {
+            Log.e(TAG, "Error loading blacklist: " + e.getMessage());
+        }
+    }
+
+    public static boolean isDomainBlacklisted(String domainOrIp) {
+        if (domainOrIp == null || domainOrIp.isEmpty()) return false;
+        domainOrIp = domainOrIp.toLowerCase();
+
+        if (blockedIPs.contains(domainOrIp)) return true;
+
+        for (String blocked : blockedIPs) {
+            if (blocked.startsWith(".")) {
+                String root = blocked.substring(1);
+                if (domainOrIp.endsWith("." + root) || domainOrIp.equals(root)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     public static class TrafficRecord {
         public long id;
@@ -440,8 +455,6 @@ public class Allowed extends SQLiteOpenHelper {
         }
     }
 
-    // ==================== LEGACY ====================
-
     public Allowed() {
         super(null, DATABASE_NAME, null, DATABASE_VERSION);
     }
@@ -455,107 +468,4 @@ public class Allowed extends SQLiteOpenHelper {
     public boolean isForwarded() {
         return raddr != null;
     }
-    private static final Set<String> blockedIPs = ConcurrentHashMap.newKeySet();
-
-// Call this once on startup
-/*public static void loadBlacklist(Context context) {
-    try {
-        SQLiteDatabase db = getInstance().getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT domain FROM blacklist WHERE enabled=1", null);
-        blockedIPs.clear();
-        while (c.moveToNext()) {
-            String entry = c.getString(0).trim();
-            blockedIPs.add(entry);
-            // also resolve to IPs for faster blocking
-            try {
-                InetAddress[] addrs = InetAddress.getAllByName(entry);
-                for (InetAddress addr : addrs) {
-                    blockedIPs.add(addr.getHostAddress());
-                }
-            } catch (Exception ignore) {}
-        }
-        c.close();
-        Log.d("Allowed", "Loaded blacklist entries: " + blockedIPs.size());
-    } catch (Exception e) {
-        Log.e("Allowed", "Error loading blacklist: " + e.getMessage());
-    }
-}*/
-// ✅ Returns all currently blocked domains/IPs for use in ToyVpnService
-public static Set<String> getBlockedEntries() {
-    return new HashSet<>(blockedIPs); // blockedIPs is your in-memory cache
-}
-
-    public static void loadBlacklist(Context context) {
-    try {
-        SQLiteDatabase db = getInstance().getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT domain FROM blacklist WHERE enabled=1", null);
-        blockedIPs.clear();
-
-        while (c.moveToNext()) {
-            String entry = c.getString(0).trim().toLowerCase();
-
-            // ✅ Store exact domain
-            blockedIPs.add(entry);
-
-            // ✅ Also store wildcard pattern for subdomains
-            if (!entry.startsWith(".")) {
-                blockedIPs.add("." + entry);
-            }
-
-            // ✅ Resolve and store all IPs for this domain
-            try {
-                InetAddress[] addrs = InetAddress.getAllByName(entry);
-                for (InetAddress addr : addrs) {
-                    blockedIPs.add(addr.getHostAddress());
-                }
-            } catch (Exception ignore) {}
-        }
-        c.close();
-
-        Log.d("Allowed", "✅ Loaded blacklist entries: " + blockedIPs.size());
-    } catch (Exception e) {
-        Log.e("Allowed", "❌ Error loading blacklist: " + e.getMessage());
-    }
-}
-
-
-   /* public static boolean isDomainBlacklisted(String domainOrIp) {
-    return blockedIPs.contains(domainOrIp);
-}*/
-   public static boolean isDomainBlacklisted(String domainOrIp) {
-       if (domainOrIp == null || domainOrIp.isEmpty()) return false;
-       domainOrIp = domainOrIp.toLowerCase();
-
-       // ✅ Exact match for domain or IP
-       if (blockedIPs.contains(domainOrIp)) return true;
-
-       // ✅ Match subdomains (like m.facebook.com → facebook.com)
-       for (String blocked : blockedIPs) {
-           if (blocked.startsWith(".")) {
-               String root = blocked.substring(1);
-               if (domainOrIp.endsWith("." + root) || domainOrIp.equals(root)) {
-                   return true;
-               }
-           }
-       }
-
-       return false;
-   }
-
-
-    // When user adds a new domain via UI
-public static boolean addToBlacklist(String domain) {
-    boolean result = addToBlacklist(domain, ""); // existing DB insert
-    if (result) {
-        // also update the in-memory IP cache
-        blockedIPs.add(domain);
-        try {
-            InetAddress[] addrs = InetAddress.getAllByName(domain);
-            for (InetAddress addr : addrs) blockedIPs.add(addr.getHostAddress());
-        } catch (Exception ignore) {}
-    }
-    return result;
-}
-
-
 }

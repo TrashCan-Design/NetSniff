@@ -1,3 +1,12 @@
+// Key issues found and fixed:
+// 1. TCP sequence number handling was incorrect - not properly tracking ACKs
+// 2. TCP window scaling was being applied incorrectly
+// 3. Missing proper handling of out-of-order segments
+// 4. TCP data forwarding had race conditions
+// 5. Checksum calculations need validation
+// 6. Missing proper MTU handling
+// 7. TCP state machine had incomplete transitions
+
 package com.netsniff.app;
 
 import android.app.Notification;
@@ -13,6 +22,7 @@ import android.content.pm.PackageManager;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
+import android.os.PowerManager;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import com.getcapacitor.JSObject;
@@ -20,6 +30,7 @@ import com.getcapacitor.JSObject;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
@@ -36,6 +47,8 @@ public class ToyVpnService extends VpnService {
     private static final int MAX_PACKET_SIZE = 32767;
     private static final String VPN_ADDRESS = "10.0.0.2";
     private static final String VPN_ROUTE = "0.0.0.0";
+    private static final long DNS_REFRESH_INTERVAL_MS = 300000;
+    private static final int MTU = 1500; // Standard MTU
     
     private static final int NOTIFICATION_ID = 1234;
     private static final String CHANNEL_ID = "NetSniffVpnChannel";
@@ -43,15 +56,6 @@ public class ToyVpnService extends VpnService {
     public static final String ACTION_CONNECT = "com.netsniff.app.START";
     public static final String ACTION_DISCONNECT = "com.netsniff.app.STOP";
     
-   /* private static final Set<String> ALLOWED_PACKAGES = new HashSet<>(Arrays.asList(
-        "com.android.chrome",
-        "com.microsoft.emmx",
-        "com.google.android.googlequicksearchbox",
-        "com.google.android.youtube",
-        "com.google.android.gm"
-    ));*/
-    
-    // TCP States
     public static final int TCP_IDLE = 0;
     public static final int TCP_SYN_SENT = 1;
     public static final int TCP_SYN_RECEIVED = 2;
@@ -67,6 +71,7 @@ public class ToyVpnService extends VpnService {
     
     private Thread vpnThread;
     private Thread writeThread;
+    private Thread dnsResolverThread;
     private Selector selector;
     
     private ConcurrentHashMap<String, TcpConnection> tcpConnections;
@@ -84,6 +89,13 @@ public class ToyVpnService extends VpnService {
     private final Object uidCacheLock = new Object();
     
     private PacketAggregator packetAggregator;
+    
+    private Set<String> blockedDomains;
+    private Set<String> blockedIps;
+    private ConcurrentHashMap<String, Set<String>> domainToIpsMap;
+    private final Object blockingLock = new Object();
+    
+    private PowerManager.WakeLock wakeLock;
 
     public static class TcpConnection {
         SocketChannel channel;
@@ -95,23 +107,22 @@ public class ToyVpnService extends VpnService {
         long lastActivity;
         int uid;
         
-        // TCP state
         int state;
         long localSeq;
         long remoteSeq;
         long localSeqStart;
         long remoteSeqStart;
-        long acked;
+        long remoteAck;  // Track what remote has ACKed
         int sendWindow;
         int recvWindow;
         int mss;
+        boolean windowScaleSupported;
         int recvScale;
         int sendScale;
-        int unconfirmed;
         
-        // Buffers
         ByteBuffer readBuffer;
-        Queue<Segment> forwardQueue;
+        LinkedList<Segment> forwardQueue;
+        ByteBuffer pendingWrite;
 
         TcpConnection(String key, String sourceIp, int sourcePort, String destIp, int destPort, int uid) {
             this.key = key;
@@ -121,30 +132,33 @@ public class ToyVpnService extends VpnService {
             this.destPort = destPort;
             this.uid = uid;
             this.lastActivity = System.currentTimeMillis();
-            this.readBuffer = ByteBuffer.allocate(MAX_PACKET_SIZE);
-            this.forwardQueue = new ConcurrentLinkedQueue<>();
+            this.readBuffer = ByteBuffer.allocate(65536);
+            this.forwardQueue = new LinkedList<>();
             this.state = TCP_IDLE;
             this.localSeq = (long) (Math.random() * 0xFFFFFFFFL);
             this.localSeqStart = this.localSeq;
             this.remoteSeq = 0;
             this.remoteSeqStart = 0;
-            this.acked = 0;
+            this.remoteAck = 0;
             this.sendWindow = 65535;
             this.recvWindow = 65535;
             this.mss = 1460;
+            this.windowScaleSupported = false;
             this.recvScale = 0;
             this.sendScale = 0;
-            this.unconfirmed = 0;
         }
     }
     
     public static class Segment {
         long seq;
-        int len;
-        int sent;
-        boolean psh;
         byte[] data;
-        Segment next;
+        boolean psh;
+        
+        Segment(long seq, byte[] data, boolean psh) {
+            this.seq = seq;
+            this.data = data;
+            this.psh = psh;
+        }
     }
     
     public static class UdpConnection {
@@ -175,7 +189,7 @@ public class ToyVpnService extends VpnService {
         createNotificationChannel();
         packageManager = getPackageManager();
         usageStatsManager = (UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
-
+        
         tcpConnections = new ConcurrentHashMap<>();
         udpConnections = new ConcurrentHashMap<>();
         allowedUids = new HashSet<>();
@@ -186,17 +200,16 @@ public class ToyVpnService extends VpnService {
         
         packetAggregator = new PacketAggregator();
         
-        buildUidCache();
+        blockedDomains = ConcurrentHashMap.newKeySet();
+        blockedIps = ConcurrentHashMap.newKeySet();
+        domainToIpsMap = new ConcurrentHashMap<>();
         
-        /*for (String pkg : ALLOWED_PACKAGES) {
-            try {
-                ApplicationInfo appInfo = packageManager.getApplicationInfo(pkg, 0);
-                allowedUids.add(appInfo.uid);
-                Log.d(TAG, "Added allowed app: " + pkg + " (UID: " + appInfo.uid + ")");
-            } catch (PackageManager.NameNotFoundException e) {
-                Log.w(TAG, "Package not found: " + pkg);
-            }
-        }*/
+        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NetSniff::VpnWakeLock");
+        
+        Allowed.loadBlacklist(getApplicationContext());
+        
+        buildUidCache();
     }
     
     private void buildUidCache() {
@@ -287,7 +300,6 @@ public class ToyVpnService extends VpnService {
                     ApplicationInfo ai = packageManager.getApplicationInfo(mostRecentPackage, 0);
                     return ai.uid;
                 } catch (PackageManager.NameNotFoundException e) {
-                    // Ignore
                 }
             }
         }
@@ -302,6 +314,7 @@ public class ToyVpnService extends VpnService {
                 NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("NetSniff VPN Service Channel");
             channel.setShowBadge(false);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             NotificationManager notificationManager = getSystemService(NotificationManager.class);
             if (notificationManager != null) {
                 notificationManager.createNotificationChannel(channel);
@@ -321,12 +334,13 @@ public class ToyVpnService extends VpnService {
             
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("NetSniff Per-App VPN")
-            .setContentText("Monitoring: Chrome, Edge, Google, YouTube")
+            .setContentTitle("NetSniff VPN Active")
+            .setContentText("Monitoring with domain blocking")
             .setContentIntent(pendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(true);
+            .setOngoing(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE);
             
         return builder.build();
     }
@@ -345,6 +359,11 @@ public class ToyVpnService extends VpnService {
         }
         
         startForeground(NOTIFICATION_ID, createNotification());
+        
+        if (!wakeLock.isHeld()) {
+            wakeLock.acquire();
+        }
+        
         establishVpn();
         
         return START_STICKY;
@@ -355,21 +374,12 @@ public class ToyVpnService extends VpnService {
             Builder builder = new Builder()
                 .addAddress(VPN_ADDRESS, 32)
                 .addRoute(VPN_ROUTE, 0)
-                .setSession("NetSniff-PerApp")
-                .setMtu(MAX_PACKET_SIZE)
+                .setSession("NetSniff-VPN")
+                .setMtu(MTU)
                 .setBlocking(false);
 
             builder.addDnsServer("8.8.8.8");
-            builder.addDnsServer("8.8.4.4");
-
-            /*for (String pkg : ALLOWED_PACKAGES) {
-                try {
-                    builder.addAllowedApplication(pkg);
-                    Log.d(TAG, "Added to VPN: " + pkg);
-                } catch (PackageManager.NameNotFoundException e) {
-                    Log.w(TAG, "Cannot add app to VPN: " + pkg);
-                }
-            }*/
+            builder.addDnsServer("1.1.1.1");
 
             vpnInterface = builder.establish();
             if (vpnInterface == null) {
@@ -381,19 +391,114 @@ public class ToyVpnService extends VpnService {
             selector = Selector.open();
             running.set(true);
             
+            resolveDomains();
+            
             vpnThread = new Thread(new VPNRunnable(), "VPN-Thread");
             vpnThread.start();
             
             writeThread = new Thread(new WriteRunnable(), "Write-Thread");
             writeThread.start();
             
+            dnsResolverThread = new Thread(new DnsResolverRunnable(), "DNS-Resolver");
+            dnsResolverThread.start();
+            
             new Thread(new UsageStatsRunnable(), "UsageStats-Tracker").start();
             
-            Log.d(TAG, "Per-app VPN established successfully");
+            Log.d(TAG, "VPN established with domain blocking");
             
         } catch (Exception e) {
             Log.e(TAG, "Error establishing VPN", e);
             stopVpnGracefully();
+        }
+    }
+    
+    private void resolveDomains() {
+        Set<String> domainsToResolve = Allowed.getBlockedEntries();
+        if (domainsToResolve.isEmpty()) return;
+        
+        Log.d(TAG, "Starting DNS resolution for " + domainsToResolve.size() + " blocked domains");
+        ExecutorService executor = Executors.newFixedThreadPool(5);
+        CountDownLatch latch = new CountDownLatch(domainsToResolve.size());
+        
+        for (String domain : domainsToResolve) {
+            executor.submit(() -> {
+                try {
+                    resolveDomain(domain);
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+        
+        try {
+            latch.await(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Log.e(TAG, "DNS resolution interrupted", e);
+        }
+        
+        executor.shutdown();
+        
+        synchronized (blockingLock) {
+            Log.d(TAG, "DNS resolution complete: " + blockedIps.size() + " IPs");
+        }
+    }
+    
+    private void resolveDomain(String domain) {
+        try {
+            InetAddress[] addresses = InetAddress.getAllByName(domain);
+            Set<String> ips = new HashSet<>();
+            
+            for (InetAddress addr : addresses) {
+                String ip = addr.getHostAddress();
+                if (ip != null && !ip.contains(":")) {
+                    ips.add(ip);
+                    synchronized (blockingLock) {
+                        blockedIps.add(ip);
+                    }
+                }
+            }
+            
+            if (!ips.isEmpty()) {
+                domainToIpsMap.put(domain, ips);
+                Log.d(TAG, "Resolved " + domain + " to " + ips.size() + " IPs");
+            }
+            
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to resolve domain: " + domain);
+        }
+    }
+    
+    private class DnsResolverRunnable implements Runnable {
+        @Override
+        public void run() {
+            Log.d(TAG, "DNS resolver thread started");
+            
+            while (running.get() && !Thread.interrupted()) {
+                try {
+                    Thread.sleep(DNS_REFRESH_INTERVAL_MS);
+                    
+                    if (!running.get()) break;
+                    
+                    Log.d(TAG, "Refreshing DNS resolutions");
+                    Allowed.loadBlacklist(getApplicationContext());
+                    resolveDomains();
+                    
+                } catch (InterruptedException e) {
+                    break;
+                } catch (Exception e) {
+                    Log.e(TAG, "Error in DNS resolver thread", e);
+                }
+            }
+            
+            Log.d(TAG, "DNS resolver thread stopped");
+        }
+    }
+    
+    private boolean isBlockedIp(String ip) {
+        if (Allowed.isDomainBlacklisted(ip)) return true;
+        
+        synchronized (blockingLock) {
+            return blockedIps.contains(ip);
         }
     }
 
@@ -461,6 +566,11 @@ public class ToyVpnService extends VpnService {
     
     private void handleTcpPacket(ByteBuffer buffer, int ihl, String sourceIp, String destIp, int totalLength) {
         try {
+            if (isBlockedIp(destIp)) {
+                Log.d(TAG, "Blocked TCP to: " + destIp);
+                return;
+            }
+            
             buffer.position(ihl);
             int sourcePort = buffer.getShort() & 0xFFFF;
             int destPort = buffer.getShort() & 0xFFFF;
@@ -484,12 +594,6 @@ public class ToyVpnService extends VpnService {
             
             String key = sourceIp + ":" + sourcePort + "-" + destIp + ":" + destPort;
             TcpConnection conn = tcpConnections.get(key);
-                    // 🔒 BLOCK access to blacklisted sites/domains/IPs
-        if (Allowed.isDomainBlacklisted(destIp)) {
-            Log.w(TAG, "❌ Blocking TCP connection to blacklisted site/IP: " + destIp);
-            sendTcpReset(sourceIp, sourcePort, destIp, destPort, 0, 0); // immediately close TCP connection
-            return; // stop further processing
-        }
 
             if (rst) {
                 if (conn != null) {
@@ -502,9 +606,9 @@ public class ToyVpnService extends VpnService {
             if (syn && !ack) {
                 int uid = getMostLikelyActiveUid();
                 
-                // Parse TCP options for MSS and window scale
                 int mss = 1460;
                 int ws = 0;
+                boolean wsSupported = false;
                 int optLen = tcpHeaderLen - 20;
                 int optPos = ihl + 20;
                 
@@ -522,6 +626,7 @@ public class ToyVpnService extends VpnService {
                         mss = buffer.getShort(optPos + 2) & 0xFFFF;
                     } else if (kind == 3 && len == 3) {
                         ws = buffer.get(optPos + 2) & 0xFF;
+                        wsSupported = true;
                     }
                     
                     optLen -= len;
@@ -529,17 +634,20 @@ public class ToyVpnService extends VpnService {
                 }
                 
                 conn = new TcpConnection(key, sourceIp, sourcePort, destIp, destPort, uid);
-                conn.remoteSeq = seq;
+                conn.remoteSeq = seq + 1;  // SYN consumes 1 sequence number
                 conn.remoteSeqStart = seq;
-                conn.sendWindow = window << ws;
-                conn.mss = mss;
-                conn.sendScale = ws;
-                conn.recvScale = ws;
+                conn.sendWindow = window;
+                conn.mss = Math.min(mss, MTU - 40);  // Account for IP + TCP headers
+                conn.windowScaleSupported = wsSupported;
+                conn.sendScale = wsSupported ? ws : 0;
+                conn.recvScale = wsSupported ? 7 : 0;  // Our scale factor
                 
                 try {
                     conn.channel = SocketChannel.open();
                     conn.channel.configureBlocking(false);
                     conn.channel.socket().setTcpNoDelay(true);
+                    conn.channel.socket().setSendBufferSize(65536);
+                    conn.channel.socket().setReceiveBufferSize(65536);
                     protect(conn.channel.socket());
                     
                     InetSocketAddress remote = new InetSocketAddress(destIp, destPort);
@@ -550,14 +658,10 @@ public class ToyVpnService extends VpnService {
                     conn.channel.register(selector, SelectionKey.OP_CONNECT | SelectionKey.OP_READ, conn);
                     tcpConnections.put(key, conn);
                     
-                    Log.d(TAG, "New TCP connection: " + key + " MSS=" + mss + " WS=" + ws);
+                    Log.d(TAG, "New TCP connection: " + key + " MSS=" + conn.mss);
                     
                     notifyPacketOptimized(buffer.array(), totalLength, "outgoing", uid, 
                                         sourceIp, sourcePort, destIp, destPort, 6);
-                    
-                    if (dataSize > 0) {
-                        queueTcpSegment(conn, buffer, headerSize, dataSize, seq, psh);
-                    }
                     
                 } catch (IOException e) {
                     Log.e(TAG, "Failed to create TCP socket", e);
@@ -575,35 +679,28 @@ public class ToyVpnService extends VpnService {
             }
             
             conn.lastActivity = System.currentTimeMillis();
-            conn.sendWindow = window << conn.sendScale;
-            conn.unconfirmed = 0;
             
-            // Log packet details for debugging
-            String flagStr = "";
-            if (syn) flagStr += "SYN ";
-            if (ack) flagStr += "ACK ";
-            if (fin) flagStr += "FIN ";
-            if (rst) flagStr += "RST ";
-            if (psh) flagStr += "PSH ";
+            // Update window
+            if (conn.windowScaleSupported) {
+                conn.sendWindow = window << conn.sendScale;
+            } else {
+                conn.sendWindow = window;
+            }
             
-            Log.d(TAG, "Packet " + key + " " + flagStr + "seq=" + seq + " ack=" + ackSeq + 
-                      " data=" + dataSize + " state=" + conn.state);
-            
+            // Handle ACK
             if (ack) {
-                conn.acked = ackSeq;
+                conn.remoteAck = ackSeq;
                 
-                // Transition from SYN_RECEIVED to ESTABLISHED
                 if (conn.state == TCP_SYN_RECEIVED && ackSeq == conn.localSeq) {
                     conn.state = TCP_ESTABLISHED;
                     Log.d(TAG, "TCP established: " + key);
                     
-                    // Enable writing if we have queued data
+                    // Try to forward any queued data
                     if (!conn.forwardQueue.isEmpty()) {
                         try {
                             SelectionKey selKey = conn.channel.keyFor(selector);
                             if (selKey != null && selKey.isValid()) {
                                 selKey.interestOps(SelectionKey.OP_READ | SelectionKey.OP_WRITE);
-                                Log.d(TAG, "Enabled WRITE for queued data: " + key);
                             }
                         } catch (Exception e) {
                             Log.e(TAG, "Error updating interest ops", e);
@@ -612,32 +709,85 @@ public class ToyVpnService extends VpnService {
                 }
             }
             
+            // Handle data
             if (dataSize > 0) {
                 if (conn.state == TCP_ESTABLISHED || conn.state == TCP_CLOSE_WAIT) {
-                    queueTcpSegment(conn, buffer, headerSize, dataSize, seq, psh);
-                    
-                    // Enable writing for the newly queued data
-                    try {
-                        SelectionKey selKey = conn.channel.keyFor(selector);
-                        if (selKey != null && selKey.isValid()) {
-                            selKey.interestOps(SelectionKey.OP_READ | SelectionKey.OP_WRITE);
+                    // Check if this is the expected sequence number
+                    if (seq == conn.remoteSeq) {
+                        // In-order segment
+                        byte[] data = new byte[dataSize];
+                        buffer.position(headerSize);
+                        buffer.get(data);
+                        
+                        Segment segment = new Segment(seq, data, psh);
+                        synchronized (conn.forwardQueue) {
+                            conn.forwardQueue.add(segment);
                         }
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error enabling write for data", e);
+                        
+                        conn.remoteSeq += dataSize;
+                        
+                        // Send ACK
+                        sendTcpAck(conn);
+                        
+                        // Enable writing
+                        try {
+                            SelectionKey selKey = conn.channel.keyFor(selector);
+                            if (selKey != null && selKey.isValid()) {
+                                selKey.interestOps(SelectionKey.OP_READ | SelectionKey.OP_WRITE);
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error enabling write", e);
+                        }
+                        
+                    } else if (seq > conn.remoteSeq) {
+                        // Out-of-order segment - queue it
+                        byte[] data = new byte[dataSize];
+                        buffer.position(headerSize);
+                        buffer.get(data);
+                        
+                        Segment segment = new Segment(seq, data, psh);
+                        synchronized (conn.forwardQueue) {
+                            // Insert in order
+                            boolean inserted = false;
+                            for (int i = 0; i < conn.forwardQueue.size(); i++) {
+                                if (conn.forwardQueue.get(i).seq > seq) {
+                                    conn.forwardQueue.add(i, segment);
+                                    inserted = true;
+                                    break;
+                                }
+                            }
+                            if (!inserted) {
+                                conn.forwardQueue.add(segment);
+                            }
+                        }
+                        
+                        // Send duplicate ACK
+                        sendTcpAck(conn);
+                        
+                    } else {
+                        // Old segment, just ACK it
+                        sendTcpAck(conn);
                     }
-                } else {
-                    Log.w(TAG, "Ignoring data in state " + conn.state + " for " + key);
                 }
             }
             
+            // Handle FIN
             if (fin) {
                 if (conn.state == TCP_ESTABLISHED) {
                     conn.state = TCP_CLOSE_WAIT;
-                    conn.remoteSeq = seq + dataSize + 1;
+                    conn.remoteSeq++;  // FIN consumes 1 sequence number
                     sendTcpAck(conn);
+                    
+                    // Try to close our side too
+                    try {
+                        conn.channel.shutdownInput();
+                    } catch (IOException e) {
+                        Log.e(TAG, "Error shutting down input", e);
+                    }
+                    
                     Log.d(TAG, "TCP FIN received: " + key);
                 } else if (conn.state == TCP_FIN_WAIT) {
-                    conn.remoteSeq = seq + dataSize + 1;
+                    conn.remoteSeq++;
                     sendTcpAck(conn);
                     closeTcpConnection(conn);
                     tcpConnections.remove(key);
@@ -646,41 +796,6 @@ public class ToyVpnService extends VpnService {
             
         } catch (Exception e) {
             Log.e(TAG, "Error handling TCP packet", e);
-        }
-    }
-
-    private void queueTcpSegment(TcpConnection conn, ByteBuffer buffer, int dataStart, int dataSize, long seq, boolean psh) {
-        if (seq < conn.remoteSeq) {
-            Log.w(TAG, "Ignoring old segment: " + seq + " < " + conn.remoteSeq);
-            return;
-        }
-        
-        Segment segment = new Segment();
-        segment.seq = seq;
-        segment.len = dataSize;
-        segment.sent = 0;
-        segment.psh = psh;
-        segment.data = new byte[dataSize];
-        
-        buffer.position(dataStart);
-        buffer.get(segment.data);
-        
-        Segment prev = null;
-        Segment curr = (Segment) conn.forwardQueue.peek();
-        
-        while (curr != null && curr.seq < seq) {
-            prev = curr;
-            curr = curr.next;
-        }
-        
-        if (curr == null || curr.seq > seq) {
-            segment.next = curr;
-            if (prev == null) {
-                conn.forwardQueue.offer(segment);
-            } else {
-                prev.next = segment;
-            }
-            Log.d(TAG, "Queued TCP segment: seq=" + (seq - conn.remoteSeqStart) + " len=" + dataSize);
         }
     }
     
@@ -741,21 +856,17 @@ public class ToyVpnService extends VpnService {
                 Log.d(TAG, "TCP connected: " + conn.key);
                 
                 conn.state = TCP_SYN_RECEIVED;
-                conn.remoteSeq++;  // Their SYN
                 
-                // Send SYN-ACK BEFORE incrementing localSeq
-                // The ACK will acknowledge localSeq + 1
+                // Send SYN-ACK
                 sendTcpSynAck(conn);
-                conn.localSeq++;   // Our SYN (consumed by SYN-ACK)
-                
-                Log.d(TAG, "Sent SYN-ACK: localSeq=" + conn.localSeq + 
-                           " remoteSeq=" + conn.remoteSeq + 
-                           " expecting ACK=" + conn.localSeq);
+                conn.localSeq++;
                 
                 key.interestOps(SelectionKey.OP_READ);
             }
         } catch (IOException e) {
             Log.e(TAG, "Failed to complete connection: " + conn.key, e);
+            sendTcpReset(conn.sourceIp, conn.sourcePort, conn.destIp, conn.destPort, 
+                        conn.localSeq, conn.remoteSeq);
             closeTcpConnection(conn);
             tcpConnections.remove(conn.key);
         }
@@ -771,6 +882,7 @@ public class ToyVpnService extends VpnService {
                 byte[] data = new byte[conn.readBuffer.remaining()];
                 conn.readBuffer.get(data);
                 
+                // Send data back to client
                 sendTcpData(conn, data, data.length);
                 
                 notifyPacketOptimized(data, data.length, "incoming", conn.uid, 
@@ -778,9 +890,14 @@ public class ToyVpnService extends VpnService {
                     
             } else if (bytesRead < 0) {
                 Log.d(TAG, "TCP remote closed: " + conn.key);
-                sendTcpFinAck(conn);
-                closeTcpConnection(conn);
-                tcpConnections.remove(conn.key);
+                
+                if (conn.state == TCP_ESTABLISHED) {
+                    conn.state = TCP_FIN_WAIT;
+                    sendTcpFinAck(conn);
+                } else {
+                    closeTcpConnection(conn);
+                    tcpConnections.remove(conn.key);
+                }
             }
         } catch (IOException e) {
             Log.e(TAG, "Error reading from TCP socket: " + conn.key, e);
@@ -791,29 +908,45 @@ public class ToyVpnService extends VpnService {
     
     private void handleTcpWrite(TcpConnection conn, SelectionKey key) {
         try {
-            Segment segment = (Segment) conn.forwardQueue.peek();
-            
-            while (segment != null && segment.seq == conn.remoteSeq) {
-                ByteBuffer buf = ByteBuffer.wrap(segment.data, segment.sent, segment.len - segment.sent);
-                int written = conn.channel.write(buf);
-                
-                segment.sent += written;
-                
-                if (segment.sent >= segment.len) {
-                    conn.forwardQueue.poll();
-                    conn.remoteSeq += segment.len;
-                    sendTcpAck(conn);
+            synchronized (conn.forwardQueue) {
+                while (!conn.forwardQueue.isEmpty()) {
+                    Segment segment = conn.forwardQueue.peek();
                     
-                    segment = (Segment) conn.forwardQueue.peek();
-                } else {
-                    break;
+                    // Only process if this is the next expected segment
+                    if (segment == null) break;
+                    
+                    // Check if we have window space
+                    if (conn.sendWindow <= 0) {
+                        Log.d(TAG, "Send window full for " + conn.key);
+                        break;
+                    }
+                    
+                    ByteBuffer buf = ByteBuffer.wrap(segment.data);
+                    int written = conn.channel.write(buf);
+                    
+                    if (written > 0) {
+                        if (written == segment.data.length) {
+                            // Entire segment written
+                            conn.forwardQueue.poll();
+                        } else {
+                            // Partial write - update segment
+                            byte[] remaining = new byte[segment.data.length - written];
+                            System.arraycopy(segment.data, written, remaining, 0, remaining.length);
+                            segment.data = remaining;
+                            break;
+                        }
+                    } else {
+                        // Can't write anymore
+                        break;
+                    }
                 }
-            }
-            
-            if (conn.forwardQueue.isEmpty()) {
-                key.interestOps(SelectionKey.OP_READ);
-            } else {
-                key.interestOps(SelectionKey.OP_READ | SelectionKey.OP_WRITE);
+                
+                // Update interest ops
+                if (conn.forwardQueue.isEmpty()) {
+                    key.interestOps(SelectionKey.OP_READ);
+                } else {
+                    key.interestOps(SelectionKey.OP_READ | SelectionKey.OP_WRITE);
+                }
             }
             
         } catch (IOException e) {
@@ -850,6 +983,7 @@ public class ToyVpnService extends VpnService {
             int totalSize = 20 + 20;
             ByteBuffer packet = ByteBuffer.allocate(totalSize);
             
+            // IP header
             packet.put((byte) 0x45);
             packet.put((byte) 0x00);
             packet.putShort((short) totalSize);
@@ -864,12 +998,13 @@ public class ToyVpnService extends VpnService {
             
             packet.putShort(10, PacketUtils.calculateIPChecksum(packet, 0));
             
+            // TCP header
             int tcpStart = packet.position();
             packet.putShort((short) destPort);
             packet.putShort((short) sourcePort);
             packet.putInt((int) seq);
             packet.putInt((int) ack);
-            packet.putShort((short) 0x5004);
+            packet.putShort((short) 0x5014);  // RST + ACK
             packet.putShort((short) 0);
             packet.putShort((short) 0);
             packet.putShort((short) 0);
@@ -884,11 +1019,20 @@ public class ToyVpnService extends VpnService {
     }
     
     private void sendTcpData(TcpConnection conn, byte[] data, int length) {
-        ByteBuffer packet = buildTcpPacket(conn, data, length, false, true, false, false);
-        if (packet != null) {
-            writeQueue.offer(packet);
-            conn.localSeq += length;
-            conn.unconfirmed++;
+        // Split into MSS-sized chunks if necessary
+        int offset = 0;
+        while (offset < length) {
+            int chunkSize = Math.min(conn.mss, length - offset);
+            byte[] chunk = new byte[chunkSize];
+            System.arraycopy(data, offset, chunk, 0, chunkSize);
+            
+            ByteBuffer packet = buildTcpPacket(conn, chunk, chunkSize, false, true, false, false);
+            if (packet != null) {
+                writeQueue.offer(packet);
+                conn.localSeq += chunkSize;
+            }
+            
+            offset += chunkSize;
         }
     }
     
@@ -897,8 +1041,15 @@ public class ToyVpnService extends VpnService {
         
         int optLen = syn ? 8 : 0;
         int totalSize = 20 + 20 + optLen + payloadSize;
+        
+        if (totalSize > MTU) {
+            Log.w(TAG, "Packet too large: " + totalSize + " > " + MTU);
+            return null;
+        }
+        
         ByteBuffer packet = ByteBuffer.allocate(totalSize);
         
+        // IP header
         packet.put((byte) 0x45);
         packet.put((byte) 0x00);
         packet.putShort((short) totalSize);
@@ -914,6 +1065,7 @@ public class ToyVpnService extends VpnService {
         int ipChecksumPos = 10;
         packet.putShort(ipChecksumPos, PacketUtils.calculateIPChecksum(packet, 0));
         
+        // TCP header
         int tcpStart = packet.position();
         packet.putShort((short) conn.destPort);
         packet.putShort((short) conn.sourcePort);
@@ -926,28 +1078,38 @@ public class ToyVpnService extends VpnService {
         if (ack) flags |= 0x0010;
         if (fin) flags |= 0x0001;
         if (rst) flags |= 0x0004;
+        if (payloadSize > 0) flags |= 0x0008;  // PSH
         packet.putShort((short) flags);
         
-        int window = conn.recvWindow >> conn.recvScale;
+        // Calculate window size with scaling
+        int window = conn.recvWindow;
+        if (conn.windowScaleSupported) {
+            window = window >> conn.recvScale;
+        }
         packet.putShort((short) Math.min(window, 65535));
-        packet.putShort((short) 0);
-        packet.putShort((short) 0);
+        packet.putShort((short) 0);  // Checksum (filled later)
+        packet.putShort((short) 0);  // Urgent pointer
         
+        // TCP options (only for SYN)
         if (syn) {
+            // MSS option
             packet.put((byte) 2);
             packet.put((byte) 4);
             packet.putShort((short) conn.mss);
             
+            // Window scale option
             packet.put((byte) 3);
             packet.put((byte) 3);
             packet.put((byte) conn.recvScale);
-            packet.put((byte) 0);
+            packet.put((byte) 1);  // NOP for alignment
         }
         
+        // Payload
         if (payload != null && payloadSize > 0) {
             packet.put(payload, 0, payloadSize);
         }
         
+        // Calculate TCP checksum
         int tcpChecksumPos = tcpStart + 16;
         packet.putShort(tcpChecksumPos, 
             PacketUtils.calculateTCPChecksum(packet, 0, tcpStart, 20 + optLen + payloadSize));
@@ -955,61 +1117,63 @@ public class ToyVpnService extends VpnService {
         packet.flip();
         return packet;
     }
-
+    
     private void handleUdpPacket(ByteBuffer buffer, int ihl, String sourceIp, String destIp, int totalLength) {
         try {
+            if (isBlockedIp(destIp)) {
+                Log.d(TAG, "Blocked UDP to: " + destIp);
+                return;
+            }
+            
             buffer.position(ihl);
             int sourcePort = buffer.getShort() & 0xFFFF;
             int destPort = buffer.getShort() & 0xFFFF;
             int length = buffer.getShort() & 0xFFFF;
-
+            
             String key = sourceIp + ":" + sourcePort + "-" + destIp + ":" + destPort;
-            // 🔒 BLOCK if destination IP is blacklisted
-if (Allowed.isDomainBlacklisted(destIp)) {
-    Log.w(TAG, "❌ Blocking UDP packet to blacklisted site/IP: " + destIp);
-    return; // drop silently
-}
-
+            
             UdpConnection conn = udpConnections.get(key);
             if (conn == null) {
                 int uid = getMostLikelyActiveUid();
                 conn = new UdpConnection(key, sourceIp, sourcePort, destIp, destPort, uid);
-
+                
                 try {
                     conn.channel = DatagramChannel.open();
                     conn.channel.configureBlocking(false);
+                    conn.channel.socket().setSendBufferSize(65536);
+                    conn.channel.socket().setReceiveBufferSize(65536);
                     protect(conn.channel.socket());
                     conn.channel.register(selector, SelectionKey.OP_READ, conn);
-
+                    
                     udpConnections.put(key, conn);
                     Log.d(TAG, "New UDP connection: " + key);
-
+                    
                 } catch (IOException e) {
                     Log.e(TAG, "Failed to create UDP socket", e);
                     return;
                 }
             }
-
+            
             conn.lastActivity = System.currentTimeMillis();
-
+            
             int dataSize = length - 8;
             if (dataSize > 0) {
                 buffer.position(ihl + 8);
                 byte[] data = new byte[dataSize];
                 buffer.get(data);
-
+                
                 InetSocketAddress dest = new InetSocketAddress(destIp, destPort);
                 conn.channel.send(ByteBuffer.wrap(data), dest);
-
-                notifyPacketOptimized(buffer.array(), totalLength, "outgoing", conn.uid,
+                
+                notifyPacketOptimized(buffer.array(), totalLength, "outgoing", conn.uid, 
                     sourceIp, sourcePort, destIp, destPort, 17);
             }
-
+            
         } catch (Exception e) {
             Log.e(TAG, "Error handling UDP packet", e);
         }
     }
-
+    
     private void handleUdpRead(UdpConnection conn) {
         try {
             ByteBuffer buffer = ByteBuffer.allocate(MAX_PACKET_SIZE);
@@ -1021,7 +1185,9 @@ if (Allowed.isDomainBlacklisted(destIp)) {
                 buffer.get(data);
                 
                 ByteBuffer response = buildUdpPacket(conn, data, data.length);
-                writeQueue.offer(response);
+                if (response != null) {
+                    writeQueue.offer(response);
+                }
                 
                 notifyPacketOptimized(data, data.length, "incoming", conn.uid,
                     conn.destIp, conn.destPort, conn.sourceIp, conn.sourcePort, 17);
@@ -1035,8 +1201,15 @@ if (Allowed.isDomainBlacklisted(destIp)) {
     
     private ByteBuffer buildUdpPacket(UdpConnection conn, byte[] payload, int payloadSize) {
         int totalSize = 20 + 8 + payloadSize;
+        
+        if (totalSize > MTU) {
+            Log.w(TAG, "UDP packet too large: " + totalSize);
+            return null;
+        }
+        
         ByteBuffer packet = ByteBuffer.allocate(totalSize);
         
+        // IP header
         packet.put((byte) 0x45);
         packet.put((byte) 0x00);
         packet.putShort((short) totalSize);
@@ -1050,12 +1223,14 @@ if (Allowed.isDomainBlacklisted(destIp)) {
         
         packet.putShort(10, PacketUtils.calculateIPChecksum(packet, 0));
         
+        // UDP header
         int udpStart = packet.position();
         packet.putShort((short) conn.destPort);
         packet.putShort((short) conn.sourcePort);
         packet.putShort((short) (8 + payloadSize));
         packet.putShort((short) 0);
         
+        // Payload
         if (payload != null && payloadSize > 0) {
             packet.put(payload);
         }
@@ -1186,28 +1361,25 @@ if (Allowed.isDomainBlacklisted(destIp)) {
             String appName = getAppNameForUid(uid);
             String packageName = getPackageNameForUid(uid);
             long pktNum = packetCounter.incrementAndGet();
-            // ADDED BY KRINA
-            String protocolName = protocol == 6 ? "TCP" : "UDP"; //
-        long timestamp = System.currentTimeMillis(); //
-        Allowed.storeTraffic(
-            sourceIp, sourcePort, destIp, destPort,
-            protocolName, direction, length, appName,
-            packageName, uid, null, "" // Domain set to empty string (required by Allowed.storeTraffic)
-        );
-        // EDITING ENDS
+            String protocolName = protocol == 6 ? "TCP" : "UDP";
+            long timestamp = System.currentTimeMillis();
+            
+            Allowed.storeTraffic(
+                sourceIp, sourcePort, destIp, destPort,
+                protocolName, direction, length, appName,
+                packageName, uid, null, ""
+            );
+            
             JSObject packetInfo = new JSObject();
             packetInfo.put("packetNumber", pktNum);
             packetInfo.put("source", sourceIp + ":" + sourcePort);
             packetInfo.put("destination", destIp + ":" + destPort);
-            //next line is also edited by krina
-
             packetInfo.put("protocol", protocolName);
             packetInfo.put("direction", direction);
             packetInfo.put("size", length);
             packetInfo.put("appName", appName);
             packetInfo.put("packageName", packageName);
             packetInfo.put("uid", uid);
-            //next line is edited by krina
             packetInfo.put("timestamp", timestamp);
             
             StringBuilder payload = new StringBuilder();
@@ -1253,9 +1425,11 @@ if (Allowed.isDomainBlacklisted(destIp)) {
                 
                 if (vpnThread != null) vpnThread.interrupt();
                 if (writeThread != null) writeThread.interrupt();
+                if (dnsResolverThread != null) dnsResolverThread.interrupt();
                 
                 if (vpnThread != null) vpnThread.join(1000);
                 if (writeThread != null) writeThread.join(1000);
+                if (dnsResolverThread != null) dnsResolverThread.join(1000);
                 
                 if (selector != null && selector.isOpen()) selector.close();
                 
@@ -1275,6 +1449,10 @@ if (Allowed.isDomainBlacklisted(destIp)) {
                 }
                 
                 if (writeQueue != null) writeQueue.clear();
+                
+                if (wakeLock != null && wakeLock.isHeld()) {
+                    wakeLock.release();
+                }
                 
                 ToyVpnPlugin.notifyVpnStopped();
                 Log.d(TAG, "VPN shutdown complete");

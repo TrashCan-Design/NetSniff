@@ -11,13 +11,11 @@ import {
   IonAvatar,
 } from '@ionic/react';
 import { personCircle } from 'ionicons/icons';
-// Tailwind CSS is used instead of the CSS file
-// import './About.css';
 
-const AboutUs: React.FC = () => (
-  <IonPage id="main-content" className="min-h-screen bg-gradient-to-b from-blue-100 to-gray-100 dark:from-gray-800 dark:to-gray-900">
+const AboutPage: React.FC = () => (
+  <IonPage className="min-h-screen bg-gradient-to-b from-blue-100 to-gray-100 dark:from-gray-800 dark:to-gray-900">
     <IonHeader>
-      <IonToolbar className="bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg">
+      <IonToolbar className="bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg" color="primary">
         <IonButtons slot="start">
           <IonMenuButton />
         </IonButtons>
@@ -26,7 +24,7 @@ const AboutUs: React.FC = () => (
     </IonHeader>
 
     <IonContent className="bg-transparent">
-      <div className="flex flex-col items-center p-6 max-w-4xl mx-auto animate-fadeIn">
+      <div className="flex flex-col items-center p-6 max-w-4xl mx-auto">
         <img
           src="/assets/logo.jpg"
           alt="NetSniff Logo"
@@ -89,22 +87,18 @@ const AboutUs: React.FC = () => (
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
               <span>jay.p.shah@nuv.ac.in</span>
-              
             </div>
             <div className="flex items-center space-x-3 text-gray-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
               <span>krina.t.rane@nuv.ac.in</span>
-              
             </div>
-
             <div className="flex items-center space-x-3 text-gray-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
               <span>pawan.d.punjabi@nuv.ac.in</span>
-              
             </div>
             <div className="flex items-center space-x-3 text-gray-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -126,4 +120,4 @@ const AboutUs: React.FC = () => (
   </IonPage>
 );
 
-export default AboutUs;
+export default AboutPage;
