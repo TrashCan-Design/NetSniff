@@ -31,9 +31,7 @@ export interface ToyVpnPlugin {
     callback: (...args: any[]) => void,
   ): Promise<PluginListenerHandle>;
 
-  /**
-   * Remove all listeners for this plugin
-   */
+
   removeAllListeners(): Promise<void>;
 }
 

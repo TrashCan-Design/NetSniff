@@ -174,7 +174,7 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       console.log("getSavedTraffic() result:", old);
 
       if (old && Array.isArray(old.traffic)) {
-        // ✅ Map DB data (snake_case) to Packet shape expected by UI
+        // Map old packets to current Packet structure
         const mapped = old.traffic.map((r: any, i: number) => ({
           id: `db-${r.id ?? `${Date.now()}-${i}`}`,
           timestamp: typeof r.timestamp === "number"
@@ -195,11 +195,11 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
           packetNumber: Number(r.id) || i + 1,
         }));
 
-        // ❗Show only the old packets — overwrite existing data
+        // Set loaded packets
         setAllPackets(mapped);
-        console.log(`✅ Loaded ${mapped.length} old packets from DB.`);
+        console.log(`loaded ${mapped.length} old packets from DB.`);
       } else {
-        console.warn("⚠️ No old packets found in database.");
+        console.warn("No old packets found in database.");
         setAllPackets([]); // clear if none
       }
     } catch (error) {
@@ -236,7 +236,7 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
           addPackets(newPackets);
         });
         
-        // Also keep single packet listener for backwards compatibility (if needed)
+        // Also keep single packet listener for backwards compatibility
         const singlePacketListener = await ToyVpn.addListener('packetCaptured', (data: PacketData) => {
           console.log("Received single packet");
           const packet: Packet = {
@@ -293,12 +293,8 @@ export const PacketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [processPendingPackets]);
-  // 🌐 Automatically load saved packets from database on app start
-  /*useEffect(() => {
-    console.log("🌐 PacketContext initialized → loading old packets...");
-    loadOldPackets();
-  }, []);*/
 
+  
   const requestVpnPermission = async (): Promise<void> => {
     console.log("PacketContext: Requesting VPN permission");
     setIsConnecting(true);

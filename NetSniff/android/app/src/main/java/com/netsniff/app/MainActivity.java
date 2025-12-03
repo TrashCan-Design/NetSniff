@@ -30,9 +30,7 @@ public class MainActivity extends BridgeActivity {
         checkUsageStatsPermission();
     }
     
-    /**
-     * Check if Usage Stats permission is granted (from reference code)
-     */
+    // Check if Usage Stats permission is granted
     private boolean hasUsageStatsPermission() {
         try {
             AppOpsManager appOps = (AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
@@ -47,9 +45,7 @@ public class MainActivity extends BridgeActivity {
         }
     }
     
-    /**
-     * Check and request Usage Stats permission if not granted
-     */
+    // Prompt user to grant Usage Stats permission if not granted
     private void checkUsageStatsPermission() {
         if (!hasUsageStatsPermission()) {
             showUsageStatsPermissionDialog();
@@ -58,9 +54,7 @@ public class MainActivity extends BridgeActivity {
         }
     }
     
-    /**
-     * Show dialog explaining why Usage Stats permission is needed
-     */
+    // Show dialog explaining the need for Usage Stats permission
     private void showUsageStatsPermissionDialog() {
         new AlertDialog.Builder(this)
             .setTitle("Usage Access Permission Required")

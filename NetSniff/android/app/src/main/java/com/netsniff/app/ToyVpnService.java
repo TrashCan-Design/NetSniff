@@ -1,11 +1,3 @@
-// Key issues found and fixed:
-// 1. TCP sequence number handling was incorrect - not properly tracking ACKs
-// 2. TCP window scaling was being applied incorrectly
-// 3. Missing proper handling of out-of-order segments
-// 4. TCP data forwarding had race conditions
-// 5. Checksum calculations need validation
-// 6. Missing proper MTU handling
-// 7. TCP state machine had incomplete transitions
 
 package com.netsniff.app;
 
@@ -112,7 +104,7 @@ public class ToyVpnService extends VpnService {
         long remoteSeq;
         long localSeqStart;
         long remoteSeqStart;
-        long remoteAck;  // Track what remote has ACKed
+        long remoteAck;  // tracking remote ACK 
         int sendWindow;
         int recvWindow;
         int mss;
@@ -640,7 +632,7 @@ public class ToyVpnService extends VpnService {
                 conn.mss = Math.min(mss, MTU - 40);  // Account for IP + TCP headers
                 conn.windowScaleSupported = wsSupported;
                 conn.sendScale = wsSupported ? ws : 0;
-                conn.recvScale = wsSupported ? 7 : 0;  // Our scale factor
+                conn.recvScale = wsSupported ? 7 : 0;  // cale factor
                 
                 try {
                     conn.channel = SocketChannel.open();
@@ -695,7 +687,7 @@ public class ToyVpnService extends VpnService {
                     conn.state = TCP_ESTABLISHED;
                     Log.d(TAG, "TCP established: " + key);
                     
-                    // Try to forward any queued data
+                    // forward any queued data
                     if (!conn.forwardQueue.isEmpty()) {
                         try {
                             SelectionKey selKey = conn.channel.keyFor(selector);
@@ -714,7 +706,7 @@ public class ToyVpnService extends VpnService {
                 if (conn.state == TCP_ESTABLISHED || conn.state == TCP_CLOSE_WAIT) {
                     // Check if this is the expected sequence number
                     if (seq == conn.remoteSeq) {
-                        // In-order segment
+                        // In order segment
                         byte[] data = new byte[dataSize];
                         buffer.position(headerSize);
                         buffer.get(data);
@@ -740,14 +732,14 @@ public class ToyVpnService extends VpnService {
                         }
                         
                     } else if (seq > conn.remoteSeq) {
-                        // Out-of-order segment - queue it
+                        // if Out-of-order segment - queue it
                         byte[] data = new byte[dataSize];
                         buffer.position(headerSize);
                         buffer.get(data);
                         
                         Segment segment = new Segment(seq, data, psh);
                         synchronized (conn.forwardQueue) {
-                            // Insert in order
+                            // Ensure Insert in order only
                             boolean inserted = false;
                             for (int i = 0; i < conn.forwardQueue.size(); i++) {
                                 if (conn.forwardQueue.get(i).seq > seq) {
@@ -1078,7 +1070,7 @@ public class ToyVpnService extends VpnService {
         if (ack) flags |= 0x0010;
         if (fin) flags |= 0x0001;
         if (rst) flags |= 0x0004;
-        if (payloadSize > 0) flags |= 0x0008;  // PSH
+        if (payloadSize > 0) flags |= 0x0008;  
         packet.putShort((short) flags);
         
         // Calculate window size with scaling
@@ -1090,7 +1082,7 @@ public class ToyVpnService extends VpnService {
         packet.putShort((short) 0);  // Checksum (filled later)
         packet.putShort((short) 0);  // Urgent pointer
         
-        // TCP options (only for SYN)
+        // TCP options
         if (syn) {
             // MSS option
             packet.put((byte) 2);

@@ -2,15 +2,10 @@ package com.netsniff.app;
 
 import java.nio.ByteBuffer;
 
-/**
- * Utility class for packet manipulation and checksum calculation
- * Based on NetGuard's packet handling approach
- */
+
 public class PacketUtils {
     
-    /**
-     * Calculate IP header checksum
-     */
+   // Calculate IP header checksum
     public static short calculateIPChecksum(ByteBuffer buffer, int start) {
         int sum = 0;
         buffer.position(start);
@@ -29,9 +24,7 @@ public class PacketUtils {
         return (short) ~sum;
     }
     
-    /**
-     * Calculate TCP checksum including pseudo-header
-     */
+    // Calculate TCP checksum including pseudo-header
     public static short calculateTCPChecksum(ByteBuffer buffer, int ipStart, int tcpStart, int tcpLength) {
         long sum = 0;
         
@@ -74,9 +67,9 @@ public class PacketUtils {
         return (short) ~sum;
     }
     
-    /**
-     * Calculate UDP checksum including pseudo-header
-     */
+    
+    // Calculate UDP checksum including pseudo-header
+
     public static short calculateUDPChecksum(ByteBuffer buffer, int ipStart, int udpStart, int udpLength) {
         long sum = 0;
         
@@ -93,7 +86,7 @@ public class PacketUtils {
         sum += (buffer.get() & 0xFF) << 8;
         sum += buffer.get() & 0xFF;
         
-        // Pseudo-header: protocol (UDP = 17)
+        // Pseudo-header: protocol UDP = 17
         sum += 17;
         
         // Pseudo-header: UDP length
@@ -121,9 +114,7 @@ public class PacketUtils {
         return checksum == 0 ? (short) 0xFFFF : checksum;
     }
     
-    /**
-     * Extract IP addresses from packet
-     */
+    // Extract IP addresses from packet
     public static class IPAddresses {
         public byte[] sourceIP = new byte[4];
         public byte[] destIP = new byte[4];
@@ -137,9 +128,8 @@ public class PacketUtils {
         return addr;
     }
     
-    /**
-     * Extract ports from TCP/UDP packet
-     */
+    // Extract ports from TCP/UDP packet
+
     public static class Ports {
         public int sourcePort;
         public int destPort;

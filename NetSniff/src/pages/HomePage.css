@@ -17,7 +17,7 @@
 }
 
 :root.dark .packet-header, .dark .packet-header {
-  background-color: #1e40af; /* blue-800 */
+  background-color: #1e40af; 
   color: white;
 }
 
@@ -196,7 +196,6 @@ ion-item {
   --inner-padding-end: 0;
 }
 
-/* Ensure proper text alignment in items */
 ion-label h2, ion-label h3, ion-label p {
   white-space: normal !important;
   overflow: visible !important;
@@ -208,7 +207,7 @@ ion-label h2, ion-label h3, ion-label p {
 }
 
 :root.dark ion-content, .dark ion-content {
-  --background: #111827; /* gray-900 */
+  --background: #111827; 
 }
 
 :root.dark ion-item, .dark ion-item {
@@ -217,7 +216,7 @@ ion-label h2, ion-label h3, ion-label p {
 }
 
 :root.dark ion-grid, .dark ion-grid {
-  background-color: #1f2937; /* gray-800 */
-  border: 1px solid #374151; /* gray-700 */
+  background-color: #1f2937; 
+  border: 1px solid #374151; 
 }
 

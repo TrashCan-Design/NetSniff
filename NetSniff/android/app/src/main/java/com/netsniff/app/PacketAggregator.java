@@ -10,10 +10,7 @@ import org.json.JSONException;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Aggregates packets and sends them in batches to prevent UI lag
- * Instead of sending 1000 individual notifications, sends them in batches of 50
- */
+
 public class PacketAggregator {
     private static final String TAG = "PacketAggregator";
     private static final int BATCH_SIZE = 50;
@@ -34,9 +31,7 @@ public class PacketAggregator {
         scheduleBatchSend();
     }
     
-    /**
-     * Queue a packet for batched notification
-     */
+    // Queue a new packet
     public void queuePacket(JSObject packet) {
         if (!running) return;
         
@@ -49,9 +44,7 @@ public class PacketAggregator {
         }
     }
     
-    /**
-     * Schedule next batch send
-     */
+    // Schedule periodic batch sending
     private void scheduleBatchSend() {
         if (!running) return;
         
@@ -61,9 +54,7 @@ public class PacketAggregator {
         }, BATCH_DELAY_MS);
     }
     
-    /**
-     * Send accumulated packets as a batch
-     */
+    // Send a batch of packets
     private void sendBatch() {
         int count = queuedCount.get();
         if (count == 0) return;
@@ -99,9 +90,7 @@ public class PacketAggregator {
         }
     }
     
-    /**
-     * Stop the aggregator
-     */
+    // Stop the aggregator
     public void stop() {
         running = false;
         batchHandler.removeCallbacksAndMessages(null);
@@ -113,16 +102,12 @@ public class PacketAggregator {
         queuedCount.set(0);
     }
     
-    /**
-     * Get current queue size
-     */
+    // Get current queue size
     public int getQueueSize() {
         return queuedCount.get();
     }
     
-    /**
-     * Clear all queued packets
-     */
+    // Clear the queueed packets
     public void clear() {
         packetQueue.clear();
         queuedCount.set(0);
